@@ -1,0 +1,146 @@
+"""Protocols implemented by applications and integrations (specification 5 and 9).
+
+Executors, validators, capability providers and policy resolvers are plain classes that
+satisfy these protocols structurally; they never subclass SDK types.
+"""
+
+import logging
+from collections.abc import Iterable, Mapping
+from typing import Protocol, TypeVar
+from uuid import UUID
+
+from pydantic import BaseModel, JsonValue
+
+from id42_work.actors import TrustedActor
+from id42_work.definitions import Work
+from id42_work.evidence.models import EvidenceType
+from id42_work.outcomes.models import ValidationResult
+from id42_work.policy.capabilities import CapabilityCall, CapabilitySpec
+from id42_work.policy.models import Policy
+
+InputT_contra = TypeVar("InputT_contra", bound=BaseModel, contravariant=True)
+OutputT_co = TypeVar("OutputT_co", bound=BaseModel, covariant=True)
+
+
+class ExecutionContext(Protocol):
+    """Restricted view of an execution handed to an executor.
+
+    It exposes only the granted capabilities. It never exposes registries,
+    repositories, the approval manager or the actor authority.
+    """
+
+    @property
+    def execution_id(self) -> UUID: ...
+
+    @property
+    def work_id(self) -> str: ...
+
+    @property
+    def work_version(self) -> str: ...
+
+    @property
+    def actor_id(self) -> str: ...
+
+    @property
+    def tenant_id(self) -> str | None: ...
+
+    @property
+    def granted_capabilities(self) -> frozenset[str]: ...
+
+    @property
+    def logger(self) -> logging.Logger: ...
+
+    async def invoke(
+        self, capability: str, *, action_id: str, params: Mapping[str, object]
+    ) -> JsonValue:
+        """Invoke a granted capability through its provider.
+
+        ``action_id`` must be unique within one executor run and stable across
+        replays. ``params`` must be canonicalizable (no floats). Results are
+        JSON-compatible values and are replayed from the journal on resume.
+        """
+        ...
+
+    def add_evidence(
+        self,
+        evidence_type: EvidenceType,
+        *,
+        content_reference: str | None = None,
+        content_digest: str | None = None,
+        metadata: Mapping[str, JsonValue] | None = None,
+    ) -> UUID:
+        """Record executor-produced evidence and return its id."""
+        ...
+
+
+class ValidationContext(Protocol):
+    """Context handed to validators: read-only capabilities only."""
+
+    @property
+    def execution_id(self) -> UUID: ...
+
+    @property
+    def work_id(self) -> str: ...
+
+    @property
+    def work_version(self) -> str: ...
+
+    @property
+    def input_data(self) -> BaseModel: ...
+
+    async def invoke(
+        self, capability: str, *, action_id: str, params: Mapping[str, object]
+    ) -> JsonValue:
+        """Invoke a granted capability whose spec has ``side_effecting=False``."""
+        ...
+
+
+class Executor(Protocol[InputT_contra, OutputT_co]):
+    """Implementation of a work definition.
+
+    Executors must be deterministic given their input and the results returned by
+    ``context.invoke``: on resume the executor runs again from the start and journaled
+    actions are replayed. Route every non-deterministic operation (I/O, clock,
+    randomness, LLM calls) through ``context.invoke``.
+
+    Do not catch ``BaseException`` in executors: the SDK suspends executions waiting
+    for approval with a ``BaseException`` subclass, as ``asyncio`` does for
+    cancellation.
+    """
+
+    async def execute(self, input_data: InputT_contra, context: ExecutionContext) -> OutputT_co: ...
+
+
+class Validator(Protocol):
+    """Checks an output. Exceptions raised by a validator count as a failed check."""
+
+    @property
+    def validator_id(self) -> str: ...
+
+    @property
+    def required(self) -> bool: ...
+
+    async def validate(self, output: BaseModel, context: ValidationContext) -> ValidationResult: ...
+
+
+class CapabilityProvider(Protocol):
+    """The only path from executors to external systems through the SDK."""
+
+    def capabilities(self) -> Iterable[CapabilitySpec]: ...
+
+    async def invoke(
+        self, capability: str, params: Mapping[str, object], call: CapabilityCall
+    ) -> JsonValue:
+        """Perform the capability.
+
+        Forward ``call.operation_id`` to the external system as its idempotency key
+        when supported. Raise ``UncertainOutcomeError`` when it cannot be determined
+        whether the side effect happened.
+        """
+        ...
+
+
+class PolicyResolver(Protocol):
+    """Host-side source of policies. Returning ``None`` denies the execution."""
+
+    def resolve(self, work: Work, actor: TrustedActor) -> Policy | None: ...
