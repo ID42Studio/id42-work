@@ -16,8 +16,8 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3
         with:
           python-version: "3.11"
       - run: uv sync --all-extras --dev --locked
@@ -32,8 +32,8 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3
         with:
           python-version: ${{ matrix.python-version }}
       - run: uv sync --all-extras --dev --locked
@@ -42,8 +42,8 @@ jobs:
   docs:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3
         with:
           python-version: "3.11"
       - run: uv run --with mkdocs-material mkdocs build --strict
@@ -54,8 +54,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: [lint, test, docs]
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3
         with:
           python-version: "3.11"
       - run: uv build
@@ -65,7 +65,7 @@ jobs:
           uv pip install --python /tmp/wheel-env dist/*.whl
           /tmp/wheel-env/bin/python -c "import id42_work; print(id42_work.__version__)"
           /tmp/wheel-env/bin/python examples/hello_work.py
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: dist
           path: dist/
