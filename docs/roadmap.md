@@ -16,7 +16,8 @@ is a direction, not a promise.
 
 - Adapters for LangGraph, PydanticAI and other agent runtimes, wrapping agent tool
   calls as `context.invoke`.
-- Better OpenTelemetry support (spans and attributes from specification 12).
+- OpenTelemetry integration (`id42-work[otel]`): the spans and attributes of specification
+  12, built on the event dispatcher. Not part of 0.1.0.
 
 ## v0.4: enterprise integration
 

@@ -45,10 +45,16 @@ data and an in-memory fake of an Odoo adapter: no credentials are needed.
 Then:
 
 ```python
-runner = WorkRunner(registry=registry, policies=resolver, capabilities=capabilities,
-                    actor_authority=authority, storage=MemoryStorage())
-execution = await runner.run(work_id="greet", version="1.0.0",
-                             input_data={"name": "ada"}, actor=actor)
+runner = WorkRunner(
+    registry=registry,
+    policies=resolver,
+    capabilities=capabilities,
+    actor_authority=authority,
+    storage=MemoryStorage(),
+)
+execution = await runner.run(
+    work_id="greet", version="1.0.0", input_data={"name": "ada"}, actor=actor
+)
 outcome = execution.raise_for_status()  # raises the typed error unless COMPLETED
 ```
 

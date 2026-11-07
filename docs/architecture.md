@@ -4,7 +4,7 @@ This document describes how the implementation maps to the engineering specifica
 (`SPEC.md` at the repository root, v0.1.1) and records every deviation or refinement, as the
 specification requires (section 5 and 26).
 
-## Module map (as of milestone M4)
+## Module map (0.1.0rc1)
 
 | Module | Contents |
 |---|---|
@@ -28,6 +28,7 @@ specification requires (section 5 and 26).
 | `id42_work.outcomes.validators` | Built-in output-schema validator |
 | `id42_work.events.redaction` / `.dispatcher` | `default_redactor`, `EventDispatcher` |
 | `id42_work.storage.memory` | `MemoryStorage` and the in-memory repositories |
+| `id42_work.testing` | `FakeOdooProvider`, `ManualClock`; `testing.contract.StorageContractSuite` (needs pytest) |
 | `id42_work.execution` | `Execution`, `ExecutionErrorInfo` |
 | `id42_work.approvals` | `Approval`, `ApprovalStatus`, `compute_action_digest` |
 | `id42_work.outcomes` | `Outcome`, `ValidationResult`, `Severity` |
@@ -100,6 +101,11 @@ inconsistent record:
 | D33 | 5.8: whose grants count on resume | The policy is evaluated with the resuming actor's grants. The execution keeps its original `actor_id`, and the context and providers see that actor. | The resuming actor must be authorized now; the work's identity must stay stable for replay. |
 | D34 | 12.1: `ApprovalRepository` | Added `list_by_status(status)` | `expire_due` must find due approvals across executions. |
 | D35 | 7: OUTCOME acceptance | Before completing, the manager recomputes the outcome digest and refuses if it differs from the approval | Detects an outcome altered after review was requested. |
+
+| D36 | 15: one `id42_work.testing` module | Split into `testing.fakes` (no test dependencies) and `testing.contract` (needs `pytest` and `pytest-asyncio`) | Fakes are useful in examples and applications without test tooling. |
+| D37 | 15: examples are standalone files | The invoice examples share `examples/_invoice.py` (schemas, executor, validators, wiring) | Avoids five copies of the same setup; each example still runs with `python examples/<name>.py`. |
+
+| D38 | 12, 14: optional OpenTelemetry integration (`id42-work[otel]`) | Not in 0.1.0. Structured events and `EventDispatcher` subscribers are the extension point; the `otel` extra was removed so that it promises nothing. | Deferred to v0.3 (roadmap) to keep the release candidate honest. |
 
 The M3 note on expiry is resolved: an expired PENDING approval cancels its execution
 (reason `approval_expired`), as specification 7.5 requires. An expired GRANTED approval

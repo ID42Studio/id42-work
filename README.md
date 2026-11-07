@@ -58,8 +58,17 @@ from datetime import timedelta
 from pydantic import BaseModel, JsonValue
 
 from id42_work import (
-    ActorAuthority, AutonomyLevel, CapabilityCall, CapabilityRegistry, CapabilitySpec,
-    ExecutionContext, MemoryStorage, Policy, StaticPolicyResolver, Work, WorkRegistry,
+    ActorAuthority,
+    AutonomyLevel,
+    CapabilityCall,
+    CapabilityRegistry,
+    CapabilitySpec,
+    ExecutionContext,
+    MemoryStorage,
+    Policy,
+    StaticPolicyResolver,
+    Work,
+    WorkRegistry,
     WorkRunner,
 )
 
@@ -76,38 +85,55 @@ class Directory:  # the only way the executor reaches the outside world
     def capabilities(self) -> list[CapabilitySpec]:
         return [CapabilitySpec(name="directory.read", side_effecting=False)]
 
-    async def invoke(self, capability: str, params: Mapping[str, object],
-                     call: CapabilityCall) -> JsonValue:
+    async def invoke(
+        self, capability: str, params: Mapping[str, object], call: CapabilityCall
+    ) -> JsonValue:
         return {"display_name": str(params["name"]).title()}
 
 
 class Greet:
     async def execute(self, data: GreetingInput, context: ExecutionContext) -> GreetingOutput:
-        person = await context.invoke("directory.read", action_id="lookup",
-                                      params={"name": data.name})
+        person = await context.invoke(
+            "directory.read", action_id="lookup", params={"name": data.name}
+        )
         return GreetingOutput(message=f"Hello, {person['display_name']}!")
 
 
 async def main() -> None:
-    work = Work(id="greet", version="1.0.0", name="Greet", input_schema=GreetingInput,
-                output_schema=GreetingOutput,
-                required_capabilities=frozenset({"directory.read"}))
+    work = Work(
+        id="greet",
+        version="1.0.0",
+        name="Greet",
+        input_schema=GreetingInput,
+        output_schema=GreetingOutput,
+        required_capabilities=frozenset({"directory.read"}),
+    )
     registry = WorkRegistry()
     registry.register(work, executor=Greet())
     capabilities = CapabilityRegistry()
     capabilities.add(Directory())
-    policy = Policy(id="greeting", version="1.0.0", autonomy=AutonomyLevel.AUTONOMOUS,
-                    allowed_capabilities=frozenset({"directory.read"}))
+    policy = Policy(
+        id="greeting",
+        version="1.0.0",
+        autonomy=AutonomyLevel.AUTONOMOUS,
+        allowed_capabilities=frozenset({"directory.read"}),
+    )
     authority = ActorAuthority("my-app")
-    runner = WorkRunner(registry=registry, capabilities=capabilities,
-                        policies=StaticPolicyResolver({("greet", "1.0.0"): policy}),
-                        actor_authority=authority, storage=MemoryStorage())
+    runner = WorkRunner(
+        registry=registry,
+        capabilities=capabilities,
+        policies=StaticPolicyResolver({("greet", "1.0.0"): policy}),
+        actor_authority=authority,
+        storage=MemoryStorage(),
+    )
 
     # Your application authenticates the caller first, then issues a sealed actor.
-    actor = authority.issue(actor_id="user:ada", grants={"directory.read"},
-                            ttl=timedelta(minutes=5))
-    execution = await runner.run(work_id="greet", version="1.0.0",
-                                 input_data={"name": "ada"}, actor=actor)
+    actor = authority.issue(
+        actor_id="user:ada", grants={"directory.read"}, ttl=timedelta(minutes=5)
+    )
+    execution = await runner.run(
+        work_id="greet", version="1.0.0", input_data={"name": "ada"}, actor=actor
+    )
     print(execution.status, execution.raise_for_status().output)
 
 
@@ -143,8 +169,9 @@ finance approval, even when `AUTONOMOUS`".
 ## Approval example
 
 ```python
-execution = await runner.run(work_id=..., version=..., input_data=..., actor=clerk,
-                             idempotency_key="bill-INV-1001")
+execution = await runner.run(
+    work_id=..., version=..., input_data=..., actor=clerk, idempotency_key="bill-INV-1001"
+)
 # execution.status == WAITING_APPROVAL: nothing side-effecting has happened yet
 (approval,) = await runner.approvals.list_pending(execution.execution_id)
 await runner.approvals.approve(approval.approval_id, reviewer=finance, reason="PO matched")
@@ -166,8 +193,13 @@ class AmountIsPositive:
     required = True
 
     async def validate(self, output, context) -> ValidationResult:
-        return ValidationResult(validator_id=self.validator_id, passed=output.amount > 0,
-                                severity=Severity.ERROR, message="amount must be positive")
+        return ValidationResult(
+            validator_id=self.validator_id,
+            passed=output.amount > 0,
+            severity=Severity.ERROR,
+            message="amount must be positive",
+        )
+
 
 registry.register(work, executor=ValidateInvoice(), validators=[AmountIsPositive()])
 ```
@@ -202,6 +234,7 @@ Details, module map and every deviation from the specification are in
   Python code in the same process from calling external systems directly.
 - The SDK cannot guarantee exactly-once external side effects. Uncertain results are
   flagged for reconciliation and never retried.
+- No OpenTelemetry integration yet (planned); subscribe to structured events instead.
 - Not reviewed by an external security auditor.
 
 ## Roadmap

@@ -7,6 +7,10 @@ the public API; breaking changes are listed explicitly.
 
 ## [Unreleased]
 
+## [0.1.0rc1] - 2026-11-07
+
+First release candidate. Pre-alpha: in-memory storage only; see `docs/security.md`.
+
 ### Added
 
 - Repository foundation: packaging, CI, linting, formatting, type checking and test
@@ -35,3 +39,19 @@ the public API; breaking changes are listed explicitly.
   policy re-evaluation and journal replay, where changed parameters invalidate the
   approval; `WorkRunner.cancel` with approval invalidation; the `cancel:<work_id>` grant;
   sync wrappers.
+- Testing helpers (milestone M5): `id42_work.testing` with `FakeOdooProvider`,
+  `ManualClock` and the published `StorageContractSuite`.
+- Runnable examples covering every scenario of the specification, run in CI.
+- User documentation (getting started, concepts, security model, roadmap) built with
+  MkDocs in strict mode; governance files; PyPI trusted-publishing workflow.
+
+### Not included
+
+- OpenTelemetry integration (specification 12): deferred to v0.3.
+- Persistent storage, crash recovery and execution leases: v0.2.
+
+### Security
+
+- Validation error messages no longer echo input or output values.
+- The library attaches a `NullHandler` and emits no log output unless the application
+  configures logging.

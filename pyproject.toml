@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "id42-work"
-version = "0.1.0.dev0"
+version = "0.1.0rc1"
 description = "Define work. Govern execution. Verify outcomes. A lightweight SDK for governed execution of work by software systems and AI agents."
 readme = "README.md"
 license = "Apache-2.0"
@@ -26,11 +26,9 @@ classifiers = [
 ]
 dependencies = ["pydantic>=2.7,<3"]
 
-[project.optional-dependencies]
-otel = ["opentelemetry-api>=1.25"]
-
 [project.urls]
 Homepage = "https://id42studio.github.io/"
+Documentation = "https://id42studio.github.io/"
 
 [dependency-groups]
 dev = [
@@ -45,7 +43,7 @@ dev = [
 packages = ["src/id42_work"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src/", "tests/", "README.md", "LICENSE", "CHANGELOG.md", "SPEC.md"]
+include = ["src/", "tests/", "examples/", "docs/", "README.md", "LICENSE", "CHANGELOG.md", "SPEC.md", "SECURITY.md", "CONTRIBUTING.md"]
 
 [tool.pytest.ini_options]
 minversion = "8.0"
