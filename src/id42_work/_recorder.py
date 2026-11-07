@@ -176,9 +176,12 @@ class ExecutionRecorder:
         payload: dict[str, JsonValue],
         *,
         reason: str | None = None,
+        extra_changes: Mapping[str, object] | None = None,
         **changes: object,
     ) -> Execution:
+        """Persist ``execution -> to_status`` (compare-and-set) and emit one event."""
         eid = execution.execution_id
+        changes = {**(extra_changes or {}), **changes}
         evidence_ids = tuple(e.evidence_id for e in await self.storage.evidence.list(eid))
         sequence = await self.storage.events.last_sequence(eid) + 1
         updated = transition_execution(

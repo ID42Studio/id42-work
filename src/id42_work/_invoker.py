@@ -11,7 +11,6 @@ from uuid import UUID
 from pydantic import JsonValue, TypeAdapter, ValidationError
 
 from id42_work._recorder import ExecutionRecorder
-from id42_work.actors import TrustedActor
 from id42_work.canonical import digest
 from id42_work.context import ExecutionSuspended, InvokeFn
 from id42_work.events.models import EventType
@@ -67,14 +66,12 @@ class ActionInvoker:
         recorder: ExecutionRecorder,
         execution: Execution,
         decision: PolicyDecision,
-        actor: TrustedActor,
         state: RunState,
     ) -> None:
         self._rec = recorder
         self._execution = execution
         self._eid = execution.execution_id
         self._decision = decision
-        self._actor = actor
         self._state = state
 
     async def __call__(
@@ -150,7 +147,8 @@ class ActionInvoker:
                     NonDeterministicExecutionError(msg, execution_id=eid), "non_deterministic"
                 )
             raise ExecutionFailedError(msg, execution_id=eid)
-        if entry.status in {JournalStatus.IN_FLIGHT, JournalStatus.UNCERTAIN}:
+        if entry.status in {JournalStatus.IN_FLIGHT, JournalStatus.UNCERTAIN}:  # pragma: no cover
+            # Reachable only with persistent storage, after a crash during the call.
             state.reconcile = True
             msg = f"action {entry.action_id!r} has an uncertain outcome; reconciliation required"
             raise state.fail(UncertainOutcomeError(msg, execution_id=eid), "uncertain_outcome")
@@ -215,8 +213,8 @@ class ActionInvoker:
             execution_id=eid,
             action_id=action_id,
             operation_id=operation_id(eid, action_id),
-            actor_id=self._actor.actor_id,
-            tenant_id=self._actor.tenant_id,
+            actor_id=self._execution.actor_id,
+            tenant_id=self._execution.tenant_id,
         )
         raw = await self._call_provider(
             provider.invoke(capability, MappingProxyType(dict(params)), call),

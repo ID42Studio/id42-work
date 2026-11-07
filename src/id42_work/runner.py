@@ -15,8 +15,10 @@ skipped.
 """
 
 import asyncio
+import contextlib
 import logging
-from collections.abc import Iterable, Mapping
+import threading
+from collections.abc import Generator, Iterable, Mapping
 from datetime import datetime, timedelta
 from uuid import UUID, uuid4
 
@@ -26,10 +28,12 @@ from id42_work._invoker import ActionInvoker, RunState, make_validation_invoke
 from id42_work._recorder import ExecutionRecorder
 from id42_work._time import Clock, utc_now
 from id42_work.actors import ActorAuthority, TrustedActor
+from id42_work.approvals.manager import ApprovalManager
 from id42_work.approvals.models import (
     OUTCOME_ACTION_ID,
     START_ACTION_ID,
     Approval,
+    ApprovalStatus,
 )
 from id42_work.canonical import digest
 from id42_work.context import ExecutionSuspended, RunContext, ValidatorContext
@@ -39,11 +43,16 @@ from id42_work.events.models import EventType, WorkEvent
 from id42_work.events.redaction import Redactor, default_redactor
 from id42_work.evidence.models import Evidence, EvidenceType
 from id42_work.exceptions import (
+    ConcurrentModificationError,
+    ExecutionError,
     IdempotencyConflictError,
     InputValidationError,
+    PolicyDeniedError,
     StorageError,
+    WorkDefinitionError,
 )
 from id42_work.execution import Execution
+from id42_work.identifiers import cancel_grant, resume_grant
 from id42_work.journal import JournalEntry
 from id42_work.outcomes.models import Outcome, Severity, ValidationResult
 from id42_work.outcomes.validators import validate_output_schema
@@ -55,6 +64,7 @@ from id42_work.states import ExecutionStatus
 from id42_work.storage.protocols import IdempotencyRecord, IdempotencyScope, Storage
 
 _logger = logging.getLogger("id42_work.runner")
+_MAX_REASON = 256
 _JSON = TypeAdapter(JsonValue)
 
 S = ExecutionStatus
@@ -89,8 +99,16 @@ class WorkRunner:
         self._engine = PolicyEngine(
             resolver=policies, capabilities=capabilities, actor_authority=actor_authority
         )
+        self._approvals = ApprovalManager(recorder=self._rec, actor_authority=actor_authority)
+        self._driving: set[UUID] = set()
+        self._driving_lock = threading.Lock()
 
     # ------------------------------------------------------------------ public API
+
+    @property
+    def approvals(self) -> ApprovalManager:
+        """List, approve, reject and expire approvals."""
+        return self._approvals
 
     @property
     def dispatcher(self) -> EventDispatcher:
@@ -211,7 +229,8 @@ class WorkRunner:
             effective_autonomy=decision.effective_autonomy,
             granted_capabilities=decision.granted_capabilities,
         )
-        return await self._drive(execution, binding, validated, decision, trusted)
+        with self._claim(execution.execution_id):
+            return await self._drive(execution, binding, validated, decision)
 
     def run_sync(
         self,
@@ -256,6 +275,168 @@ class WorkRunner:
         """Approvals requested for an execution."""
         return await self._rec.storage.approvals.list_for_execution(execution_id)
 
+    async def resume(
+        self,
+        execution_id: UUID,
+        *,
+        actor: object,
+        constraints: Iterable[str] | None = None,
+    ) -> Execution:
+        """Continue a ``READY`` execution after its approval was granted.
+
+        The executor runs again from the start: journaled actions are replayed, not
+        repeated, and an action whose parameters changed needs a new approval. The policy
+        is evaluated again with the current policy and the resuming actor's grants.
+
+        ``actor`` must be the execution's actor (same tenant) or hold
+        ``resume:<work_id>`` in the same tenant. Executions that are not ``READY``, or
+        that another call is already driving, are returned unchanged.
+
+        Raises ``UntrustedActorError``, ``PolicyDeniedError`` (``resume_not_allowed``),
+        ``ExecutionError`` (unknown execution), ``WorkDefinitionError`` (the definition
+        was replaced) or ``StorageError``.
+        """
+        trusted = self._authority.verify(actor, now=self._rec.now())
+        execution = await self._load(execution_id)
+        _check_operator(trusted, execution, resume_grant(execution.work_id), "resume")
+        await self._approvals.expire_for_execution(execution_id)
+        execution = await self._load(execution_id)
+        if execution.status is not S.READY:
+            return execution
+        binding = self._registry.get(execution.work_id, execution.work_version)
+        if binding.definition_digest != execution.definition_digest:
+            msg = (
+                f"work {binding.work.ref} was replaced after execution {execution_id} "
+                "started; it cannot be resumed"
+            )
+            raise WorkDefinitionError(msg, execution_id=execution_id)
+        validated = await self._rec.storage.inputs.get(execution.input_reference)
+        if validated is None:
+            msg = f"input of execution {execution_id} is not available"
+            raise StorageError(msg, execution_id=execution_id)
+
+        with self._claim(execution_id) as claimed:
+            if not claimed:
+                return execution
+            decision = self._engine.evaluate(
+                binding.work, trusted, constraints=constraints, now=self._rec.now()
+            )
+            await self._rec.emit(
+                execution,
+                EventType.EXECUTION_RESUMED,
+                {"resumed_by": trusted.actor_id, "allowed": decision.allowed},
+            )
+            if not decision.allowed:
+                return await self._rec.transition(
+                    execution,
+                    S.DENIED,
+                    EventType.EXECUTION_DENIED,
+                    {"reasons": list(decision.reasons)},
+                    reason="policy_denied_on_resume",
+                    policy_reasons=decision.reasons,
+                    granted_capabilities=frozenset[str](),
+                    error=decision.error,
+                )
+            return await self._drive(
+                execution,
+                binding,
+                validated,
+                decision,
+                first_changes={
+                    "policy_id": decision.policy_id,
+                    "policy_version": decision.policy_version,
+                    "effective_autonomy": decision.effective_autonomy,
+                },
+            )
+
+    def resume_sync(
+        self,
+        execution_id: UUID,
+        *,
+        actor: object,
+        constraints: Iterable[str] | None = None,
+    ) -> Execution:
+        """Synchronous ``resume``. Refuses to run inside an active event loop."""
+        _ensure_no_running_loop("resume_sync")
+        return asyncio.run(self.resume(execution_id, actor=actor, constraints=constraints))
+
+    async def cancel(
+        self, execution_id: UUID, *, actor: object, reason: str = "cancelled"
+    ) -> Execution:
+        """Cancel an execution that is not running (specification 4.3).
+
+        Allowed from ``CREATED``, ``READY``, ``WAITING_APPROVAL`` and ``WAITING_REVIEW``;
+        open approvals are invalidated. Terminal executions are returned unchanged.
+        ``actor`` must be the execution's actor or hold ``cancel:<work_id>`` in the same
+        tenant.
+
+        Raises ``UntrustedActorError``, ``PolicyDeniedError`` (``cancel_not_allowed``),
+        ``ExecutionError`` (unknown execution, invalid reason) or
+        ``InvalidStateTransitionError`` (running or validating).
+        """
+        trusted = self._authority.verify(actor, now=self._rec.now())
+        if not reason.strip() or len(reason) > _MAX_REASON:
+            msg = f"reason must be non-blank and at most {_MAX_REASON} characters"
+            raise ExecutionError(msg, execution_id=execution_id)
+        execution = await self._load(execution_id)
+        _check_operator(trusted, execution, cancel_grant(execution.work_id), "cancel")
+        if execution.is_terminal:
+            return execution
+        cancelled = await self._rec.transition(
+            execution,
+            S.CANCELLED,
+            EventType.EXECUTION_CANCELLED,
+            {"cancelled_by": trusted.actor_id},
+            reason=reason,
+        )
+        for approval in await self._rec.storage.approvals.list_for_execution(execution_id):
+            if approval.status in {ApprovalStatus.PENDING, ApprovalStatus.GRANTED}:
+                with contextlib.suppress(ConcurrentModificationError):
+                    await self._rec.retire(
+                        cancelled,
+                        approval,
+                        ApprovalStatus.INVALIDATED,
+                        EventType.APPROVAL_INVALIDATED,
+                    )
+        return cancelled
+
+    def cancel_sync(
+        self, execution_id: UUID, *, actor: object, reason: str = "cancelled"
+    ) -> Execution:
+        """Synchronous ``cancel``. Refuses to run inside an active event loop."""
+        _ensure_no_running_loop("cancel_sync")
+        return asyncio.run(self.cancel(execution_id, actor=actor, reason=reason))
+
+    async def expire_due(self, now: datetime | None = None) -> int:
+        """Expire due approvals (see ``ApprovalManager.expire_due``)."""
+        return await self._approvals.expire_due(now)
+
+    # ------------------------------------------------------------------ claims
+
+    async def _load(self, execution_id: UUID) -> Execution:
+        execution = await self._rec.storage.executions.get(execution_id)
+        if execution is None:
+            msg = f"execution {execution_id} does not exist"
+            raise ExecutionError(msg, execution_id=execution_id)
+        return execution
+
+    @contextlib.contextmanager
+    def _claim(self, execution_id: UUID) -> Generator[bool]:
+        """Mark an execution as driven by this runner; yields ``False`` if it already is.
+
+        Scope: one process. Persistent storage needs execution leases (roadmap v0.2).
+        """
+        with self._driving_lock:
+            claimed = execution_id not in self._driving
+            if claimed:
+                self._driving.add(execution_id)
+        try:
+            yield claimed
+        finally:
+            if claimed:
+                with self._driving_lock:
+                    self._driving.discard(execution_id)
+
     # ------------------------------------------------------------------ driving
 
     async def _drive(
@@ -264,7 +445,8 @@ class WorkRunner:
         binding: WorkBinding,
         validated: BaseModel,
         decision: PolicyDecision,
-        actor: TrustedActor,
+        *,
+        first_changes: Mapping[str, object] | None = None,
     ) -> Execution:
         """Run from ``READY`` to a terminal or waiting state."""
         start_gate = decision.gate_for(ApprovalGate.START)
@@ -281,20 +463,25 @@ class WorkRunner:
                     EventType.EXECUTION_SUSPENDED,
                     {"gate": ApprovalGate.START.value},
                     reason="awaiting_start_approval",
+                    extra_changes=first_changes,
                 )
 
         execution = await self._rec.transition(
-            execution, S.RUNNING, EventType.EXECUTION_STARTED, {}
+            execution,
+            S.RUNNING,
+            EventType.EXECUTION_STARTED,
+            {},
+            extra_changes=first_changes,
         )
         state = RunState()
         context = RunContext(
             execution_id=execution.execution_id,
             work_id=execution.work_id,
             work_version=execution.work_version,
-            actor_id=actor.actor_id,
-            tenant_id=actor.tenant_id,
+            actor_id=execution.actor_id,
+            tenant_id=execution.tenant_id,
             granted_capabilities=decision.granted_capabilities,
-            invoke=ActionInvoker(self._rec, execution, decision, actor, state),
+            invoke=ActionInvoker(self._rec, execution, decision, state),
             new_evidence_id=uuid4,
         )
         output: object = None
@@ -463,7 +650,7 @@ class WorkRunner:
             )
 
         await self._rec.emit(execution, EventType.VALIDATION_PASSED, {"verified": True})
-        accepted = _accept(outcome, self._rec.now())
+        accepted = outcome.accepted(self._rec.now())
         return await self._rec.transition(
             execution, S.COMPLETED, EventType.EXECUTION_COMPLETED, {}, outcome=accepted
         )
@@ -495,6 +682,16 @@ class WorkRunner:
 
 
 # ---------------------------------------------------------------------- helpers
+
+
+def _check_operator(actor: TrustedActor, execution: Execution, grant: str, operation: str) -> None:
+    """Allow the execution's own actor, or a same-tenant actor holding ``grant``."""
+    same_tenant = actor.tenant_id == execution.tenant_id
+    if same_tenant and (actor.actor_id == execution.actor_id or actor.has_grant(grant)):
+        return
+    reasons = (f"{operation}_not_allowed",)
+    msg = f"actor {actor.actor_id!r} may not {operation} execution {execution.execution_id}"
+    raise PolicyDeniedError(msg, execution_id=execution.execution_id, reasons=reasons)
 
 
 def _ensure_no_running_loop(name: str) -> None:
@@ -571,12 +768,6 @@ async def _run_validator(
     return result.model_copy(
         update={"validator_id": validator.validator_id, "required": validator.required}
     )
-
-
-def _accept(outcome: Outcome, at: datetime) -> Outcome:
-    fields = {name: getattr(outcome, name) for name in Outcome.model_fields}
-    fields["accepted_at"] = max(at, outcome.produced_at)
-    return Outcome.model_validate(fields)
 
 
 def _json_list(values: Iterable[str]) -> list[JsonValue]:

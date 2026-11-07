@@ -29,3 +29,9 @@ the public API; breaking changes are listed explicitly.
   records, structured and redacted events with an `EventDispatcher`, idempotency with
   conflict detection, and `MemoryStorage`.
 - Integration, concurrency and runtime security tests.
+- Approvals and resumption (milestone M4): `ApprovalManager` with reviewer checks
+  (sealed identity, grant, tenant, no self-approval, reasons), single-winner decisions,
+  `APPROVAL_DECISION` evidence and lazy or swept expiry; `WorkRunner.resume` with
+  policy re-evaluation and journal replay, where changed parameters invalidate the
+  approval; `WorkRunner.cancel` with approval invalidation; the `cancel:<work_id>` grant;
+  sync wrappers.

@@ -4,7 +4,7 @@ This document describes how the implementation maps to the engineering specifica
 ([SPEC.md](../SPEC.md), v0.1.1) and records every deviation or refinement, as the
 specification requires (section 5 and 26).
 
-## Module map (as of milestone M3)
+## Module map (as of milestone M4)
 
 | Module | Contents |
 |---|---|
@@ -20,7 +20,8 @@ specification requires (section 5 and 26).
 | `id42_work.policy.resolvers` | `StaticPolicyResolver` |
 | `id42_work.error_info` | `ExecutionErrorInfo`, `ErrorCause` |
 | `id42_work.registry` | `WorkRegistry`, `WorkBinding` |
-| `id42_work.runner` | `WorkRunner` (public entry point) |
+| `id42_work.runner` | `WorkRunner` (public entry point): `run`, `resume`, `cancel`, `expire_due` and sync variants |
+| `id42_work.approvals.manager` | `ApprovalManager`: `list_pending`, `approve`, `reject`, `expire_due` |
 | `id42_work.context` | `RunContext`, `ValidatorContext` (the contexts handed to user code) |
 | `id42_work._invoker` | Capability calls: checks, journal, replay, ACTION gates, provider calls (internal) |
 | `id42_work._recorder` | Transitions, events, evidence, journal settlement, approval gates (internal) |
@@ -92,8 +93,20 @@ inconsistent record:
 | D27 | 11: event list | Added `work.action.failed` | A provider error that the executor handles is not an uncertain outcome. |
 | D28 | 9: validator capability calls | Not journaled; the provider receives `action_id="validation:<id>"` | Validators are read-only and are not replayed. |
 
-Grant format: a grant is either a capability name, `approve:<capability-or-work-id>`
-or `resume:<work-id>`. No other prefixes are accepted.
+| D29 | 5.8: `runner.approvals.approve(...)` is synchronous | `ApprovalManager` methods are `async`, with `approve_sync`, `reject_sync` and `list_pending_sync` | Storage is asynchronous (D7). |
+| D30 | 5.8: `cancel(...)` authorization not specified | `cancel` is allowed for the execution's own actor or a same-tenant actor holding the new grant prefix `cancel:<work_id>` | Operators need to cancel without being able to resume or approve. |
+| D31 | 5.8: `resume` | Executions that are not `READY`, or that this runner is already driving, are returned unchanged. A per-process claim prevents two concurrent drivers. | Makes `resume` safe to retry. Persistent storage will need execution leases (v0.2). |
+| D32 | 7: events of a decision | START/ACTION grant: `work.approval.granted`, then the transition `WAITING_APPROVAL -> READY` (`work.execution.authorized`, reason `approval_granted`). OUTCOME grant: `granted`, `consumed`, then `WAITING_REVIEW -> COMPLETED`. Rejection: `work.approval.rejected`, then `work.execution.rejected`. | One event per transition, plus the approval's own events. |
+| D33 | 5.8: whose grants count on resume | The policy is evaluated with the resuming actor's grants. The execution keeps its original `actor_id`, and the context and providers see that actor. | The resuming actor must be authorized now; the work's identity must stay stable for replay. |
+| D34 | 12.1: `ApprovalRepository` | Added `list_by_status(status)` | `expire_due` must find due approvals across executions. |
+| D35 | 7: OUTCOME acceptance | Before completing, the manager recomputes the outcome digest and refuses if it differs from the approval | Detects an outcome altered after review was requested. |
+
+The M3 note on expiry is resolved: an expired PENDING approval cancels its execution
+(reason `approval_expired`), as specification 7.5 requires. An expired GRANTED approval
+is retired, and the next `resume` requests a new one.
+
+Grant format: a grant is either a capability name, `approve:<capability-or-work-id>`,
+`resume:<work-id>` or `cancel:<work-id>`. No other prefixes are accepted.
 
 Schema references in `WorkDescriptor` use `module:qualname`. Classes defined inside
 functions are accepted, but their references are not importable.
@@ -162,3 +175,32 @@ appended (gapless per execution), then subscribers are notified.
 Interrupted side effects: cancellation or timeout during a side-effecting provider
 call marks the action `UNCERTAIN` and the execution `requires_reconciliation`. The SDK
 never retries.
+
+## Approvals and resumption (M4)
+
+- `approve` and `reject` verify the reviewer before writing anything:
+  - the reviewer is a sealed actor from the same tenant;
+  - the reviewer holds the gate's `reviewer_capability`;
+  - the reviewer is not the execution's actor;
+  - the approval is still `PENDING` and not expired;
+  - the execution is waiting on this gate;
+  - a reason is present when required (always for rejections).
+
+  Only then is the approval updated with compare-and-set (exactly one concurrent
+  decision wins) and `APPROVAL_DECISION` evidence recorded.
+- `resume` runs these steps:
+  1. verify the actor and its right to resume;
+  2. expire due approvals;
+  3. require `READY` and an unchanged definition digest;
+  4. reload the stored input;
+  5. claim the execution;
+  6. re-evaluate the policy;
+  7. run the executor again from the start.
+
+  Journaled `SUCCEEDED` actions are replayed (an action that differs fails with
+  `non_deterministic`). Journaled `FAILED` actions raise again. A `PENDING_APPROVAL`
+  action consumes a matching grant, or invalidates a grant whose digest differs and
+  requests a new one.
+- `cancel` moves `CREATED`, `READY`, `WAITING_APPROVAL` or `WAITING_REVIEW` to
+  `CANCELLED` and invalidates open approvals. A running execution cannot be cancelled
+  in 0.1.0.

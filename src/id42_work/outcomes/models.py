@@ -1,5 +1,6 @@
 """Outcome and validation result models (specification 3.6 and 9)."""
 
+from datetime import datetime
 from enum import Enum
 from typing import Self
 from uuid import UUID
@@ -7,7 +8,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field, SerializeAsAny, model_validator
 
 from id42_work._model import FrozenModel
-from id42_work._time import UtcDatetime
+from id42_work._time import UtcDatetime, to_utc
 from id42_work.identifiers import Identifier
 
 
@@ -63,6 +64,15 @@ class Outcome(FrozenModel):
                 msg = "accepted_at cannot precede produced_at"
                 raise ValueError(msg)
         return self
+
+    def accepted(self, at: datetime) -> "Outcome":
+        """Return a copy accepted at ``at`` (never earlier than ``produced_at``).
+
+        Raises ``ValueError`` if the outcome is not verified.
+        """
+        fields = {name: getattr(self, name) for name in Outcome.model_fields}
+        fields["accepted_at"] = max(to_utc(at), self.produced_at)
+        return Outcome.model_validate(fields)
 
     @property
     def failed_results(self) -> tuple[ValidationResult, ...]:

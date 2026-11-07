@@ -17,11 +17,11 @@ IDENTIFIER_PATTERN = rf"^{_SEGMENT}(?:\.{_SEGMENT})*$"
 CAPABILITY_PATTERN = IDENTIFIER_PATTERN
 """Capability names, e.g. ``odoo.invoice.post``."""
 
-GRANT_PREFIXES: tuple[str, ...] = ("approve", "resume")
+GRANT_PREFIXES: tuple[str, ...] = ("approve", "resume", "cancel")
 """Prefixes for grants that are not capabilities themselves."""
 
 GRANT_PATTERN = rf"^(?:(?:{'|'.join(GRANT_PREFIXES)}):)?{_SEGMENT}(?:\.{_SEGMENT})*$"
-"""Actor grants: a capability, ``approve:<target>`` or ``resume:<work_id>``."""
+"""Actor grants: a capability, or ``approve:``, ``resume:`` or ``cancel:`` plus a target."""
 
 ACTION_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
 """Executor action ids. Cannot start with ``_``, which is reserved for gate actions."""
@@ -59,3 +59,8 @@ def approve_grant(target: str) -> str:
 def resume_grant(work_id: str) -> str:
     """Grant that allows resuming executions of ``work_id`` started by another actor."""
     return f"resume:{work_id}"
+
+
+def cancel_grant(work_id: str) -> str:
+    """Grant that allows cancelling executions of ``work_id`` started by another actor."""
+    return f"cancel:{work_id}"

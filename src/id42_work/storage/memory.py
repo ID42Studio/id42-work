@@ -119,6 +119,10 @@ class MemoryApprovalRepository:
                 if a.execution_id == execution_id and (status is None or a.status is status)
             )
 
+    async def list_by_status(self, status: ApprovalStatus) -> tuple[Approval, ...]:
+        with self._lock:
+            return tuple(a for a in self._approvals.values() if a.status is status)
+
     async def compare_and_set(self, updated: Approval, *, expected_status: ApprovalStatus) -> None:
         with self._lock:
             current = self._approvals.get(updated.approval_id)

@@ -4,6 +4,7 @@ from importlib.metadata import PackageNotFoundError, version
 
 from id42_work.actors import ActorAuthority, TrustedActor
 from id42_work.approvals import Approval, ApprovalStatus
+from id42_work.approvals.manager import ApprovalManager
 from id42_work.contracts import (
     CapabilityProvider,
     ExecutionContext,
@@ -73,6 +74,7 @@ __all__ = [
     "ApprovalError",
     "ApprovalExpiredError",
     "ApprovalGate",
+    "ApprovalManager",
     "ApprovalNotAllowedError",
     "ApprovalRejectedError",
     "ApprovalRequiredError",

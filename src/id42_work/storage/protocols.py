@@ -77,6 +77,10 @@ class ApprovalRepository(Protocol):
         self, execution_id: UUID, *, status: ApprovalStatus | None = None
     ) -> tuple[Approval, ...]: ...
 
+    async def list_by_status(self, status: ApprovalStatus) -> tuple[Approval, ...]:
+        """Every approval currently in ``status`` (used to expire due approvals)."""
+        ...
+
     async def compare_and_set(self, updated: Approval, *, expected_status: ApprovalStatus) -> None:
         """Replace the approval if its current status is ``expected_status``.
 
