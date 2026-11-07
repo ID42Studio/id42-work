@@ -4,9 +4,9 @@ import sys
 import textwrap
 
 import pytest
-from _factories import InvoiceInput, InvoiceOutput, make_work
 from pydantic import BaseModel, ValidationError
 
+from _factories import InvoiceInput, InvoiceOutput, make_work
 from id42_work import AutonomyLevel, Work, WorkDescriptor, WorkRef
 
 

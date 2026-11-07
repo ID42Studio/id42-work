@@ -2,9 +2,9 @@ import pickle
 from datetime import datetime, timedelta
 
 import pytest
-from _factories import T0
 from pydantic import ValidationError
 
+from _factories import T0
 from id42_work import ActorAuthority, TrustedActor, UntrustedActorError
 
 

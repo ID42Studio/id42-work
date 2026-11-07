@@ -80,7 +80,8 @@ ignore = ["PLR0913"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "ANN", "PLR2004"]
-"examples/**" = ["T201", "S101"]
+"examples/**" = ["T201", "S101", "PLR2004"]
+"src/id42_work/testing/contract.py" = ["S101", "ANN401", "PLR2004"]
 
 [tool.ruff.lint.flake8-tidy-imports]
 ban-relative-imports = "all"

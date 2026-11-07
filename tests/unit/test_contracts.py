@@ -6,9 +6,9 @@ These assignments are checked statically by pyright and exercised at runtime.
 from collections.abc import Iterable, Mapping
 
 import pytest
-from _factories import T0, InvoiceInput, InvoiceOutput, make_work
 from pydantic import BaseModel, JsonValue
 
+from _factories import T0, InvoiceInput, InvoiceOutput, make_work
 from id42_work import (
     ActorAuthority,
     CapabilityCall,

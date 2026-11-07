@@ -2,9 +2,9 @@ from datetime import timedelta
 from uuid import UUID, uuid4
 
 import pytest
-from _factories import DIGEST_A, T0
 from pydantic import ValidationError
 
+from _factories import DIGEST_A, T0
 from id42_work import EventType, Evidence, EvidenceType, ExecutionErrorInfo, WorkEvent
 from id42_work.journal import NAMESPACE_ID42_WORK, JournalEntry, JournalStatus, operation_id
 

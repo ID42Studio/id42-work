@@ -4,9 +4,9 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
-from _factories import DIGEST_A, T0
 from pydantic import ValidationError
 
+from _factories import DIGEST_A, T0
 from id42_work import Approval, ApprovalGate, ApprovalStatus
 from id42_work.approvals import OUTCOME_ACTION_ID, START_ACTION_ID, compute_action_digest
 

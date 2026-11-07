@@ -2,9 +2,9 @@ from datetime import timedelta
 from uuid import uuid4
 
 import pytest
-from _factories import T0, InvoiceOutput, make_outcome, make_output
 from pydantic import ValidationError
 
+from _factories import T0, InvoiceOutput, make_outcome, make_output
 from id42_work import Outcome, Severity, ValidationResult
 
 

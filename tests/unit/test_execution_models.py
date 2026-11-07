@@ -2,9 +2,9 @@ from datetime import timedelta
 from uuid import uuid4
 
 import pytest
-from _factories import T0, make_execution, make_outcome
 from pydantic import ValidationError
 
+from _factories import T0, make_execution, make_outcome
 from id42_work import (
     ApprovalRejectedError,
     ApprovalRequiredError,
