@@ -1,0 +1,33 @@
+name: Bug report
+description: Something does not behave as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Security problems must not be reported here. See SECURITY.md.
+  - type: input
+    id: version
+    attributes:
+      label: id42-work version
+    validations:
+      required: true
+  - type: input
+    id: python
+    attributes:
+      label: Python version and OS
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: Code that reproduces the problem with synthetic data. No credentials.
+      render: python
+    validations:
+      required: true

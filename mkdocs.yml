@@ -1,0 +1,30 @@
+site_name: ID42 Work SDK
+site_description: Define work. Govern execution. Verify outcomes.
+strict: true
+
+theme:
+  name: material
+  features:
+    - content.code.copy
+    - navigation.sections
+
+markdown_extensions:
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.superfences
+
+nav:
+  - Home: index.md
+  - Getting started: getting-started.md
+  - Concepts:
+      - Work: concepts/work.md
+      - Policy: concepts/policy.md
+      - Execution: concepts/execution.md
+      - Approval: concepts/approval.md
+      - Outcome and evidence: concepts/outcome.md
+      - Journal and replay: concepts/journal.md
+  - Architecture: architecture.md
+  - Security: security.md
+  - Roadmap: roadmap.md

@@ -1,7 +1,7 @@
 # Architecture
 
 This document describes how the implementation maps to the engineering specification
-([SPEC.md](../SPEC.md), v0.1.1) and records every deviation or refinement, as the
+(`SPEC.md` at the repository root, v0.1.1) and records every deviation or refinement, as the
 specification requires (section 5 and 26).
 
 ## Module map (as of milestone M4)
