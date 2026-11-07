@@ -87,8 +87,8 @@ ignore = ["PLR0913"]
 ban-relative-imports = "all"
 
 [tool.pyright]
-include = ["src", "tests"]
-extraPaths = ["tests"]
+include = ["src", "tests", "examples"]
+extraPaths = ["tests", "examples"]
 pythonVersion = "3.11"
 typeCheckingMode = "standard"
 strict = ["src"]

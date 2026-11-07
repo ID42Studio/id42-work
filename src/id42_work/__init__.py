@@ -1,5 +1,6 @@
 """ID42 Work SDK: define work, govern execution, verify outcomes."""
 
+import logging
 from importlib.metadata import PackageNotFoundError, version
 
 from id42_work.actors import ActorAuthority, TrustedActor
@@ -61,6 +62,9 @@ from id42_work.registry import WorkBinding, WorkRegistry
 from id42_work.runner import WorkRunner
 from id42_work.states import TRANSITIONS, ExecutionStatus
 from id42_work.storage import MemoryStorage
+
+# A library must not emit log records unless the application configures logging.
+logging.getLogger("id42_work").addHandler(logging.NullHandler())
 
 try:
     __version__: str = version("id42-work")
