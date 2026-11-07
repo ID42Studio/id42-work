@@ -8,6 +8,7 @@ from typing import Self
 from pydantic import Field, PositiveInt, model_validator
 
 from id42_work._model import FrozenModel
+from id42_work.error_info import ExecutionErrorInfo
 from id42_work.evidence.models import EvidenceType
 from id42_work.identifiers import Capability, Grant, Identifier, SemVer
 
@@ -121,10 +122,15 @@ class PolicyDecision(FrozenModel):
     reasons: tuple[str, ...] = ()
     policy_id: Identifier | None = None
     policy_version: SemVer | None = None
+    idempotency_key_required: bool = False
+    error: ExecutionErrorInfo | None = None
 
     @model_validator(mode="after")
     def _check(self) -> Self:
         if self.allowed:
+            if self.error is not None:
+                msg = "an allowed decision cannot carry an evaluation error"
+                raise ValueError(msg)
             if self.effective_autonomy is None or self.policy_id is None:
                 msg = "an allowed decision must name the policy and the effective autonomy"
                 raise ValueError(msg)
@@ -138,4 +144,16 @@ class PolicyDecision(FrozenModel):
             if self.granted_capabilities or self.required_gates:
                 msg = "a denied decision must not grant capabilities or gates"
                 raise ValueError(msg)
+            if self.idempotency_key_required:
+                msg = "a denied decision has no idempotency requirement"
+                raise ValueError(msg)
         return self
+
+    def gate_for(
+        self, gate: ApprovalGate, capability: str | None = None
+    ) -> ApprovalRequirement | None:
+        """The requirement for ``gate`` (and ``capability`` for ACTION), if any."""
+        for requirement in self.required_gates:
+            if requirement.key == (gate, capability):
+                return requirement
+        return None

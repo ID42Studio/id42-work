@@ -1,16 +1,21 @@
 """Builders for domain records used across unit tests."""
 
+from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel
+from pydantic import BaseModel, JsonValue
 
 from id42_work import (
+    AutonomyLevel,
+    CapabilityCall,
+    CapabilitySpec,
     Execution,
     ExecutionStatus,
     Outcome,
+    Policy,
     Severity,
     ValidationResult,
     Work,
@@ -93,3 +98,40 @@ def make_execution(**overrides: Any) -> Execution:
     }
     fields.update(overrides)
     return Execution(**fields)
+
+
+# --- policy and capability helpers -------------------------------------------------
+
+
+class StaticCapabilities:
+    """Provider declaring fixed capabilities; ``invoke`` echoes its params."""
+
+    def __init__(self, *specs: tuple[str, bool]) -> None:
+        self._specs = [CapabilitySpec(name=n, side_effecting=s) for n, s in specs]
+
+    def capabilities(self) -> list[CapabilitySpec]:
+        return list(self._specs)
+
+    async def invoke(
+        self, capability: str, params: Mapping[str, object], call: CapabilityCall
+    ) -> JsonValue:
+        return {"capability": capability}
+
+
+def make_policy(**overrides: Any) -> Policy:
+    fields: dict[str, Any] = {
+        "id": "invoice_review",
+        "version": "1.0.0",
+        "autonomy": AutonomyLevel.AUTONOMOUS,
+        "allowed_capabilities": frozenset({"suppliers.read", "invoices.validate"}),
+    }
+    fields.update(overrides)
+    return Policy(**fields)
+
+
+class FixedClock:
+    def __init__(self, now: datetime = T0) -> None:
+        self.now = now
+
+    def __call__(self) -> datetime:
+        return self.now

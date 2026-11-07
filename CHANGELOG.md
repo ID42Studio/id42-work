@@ -17,3 +17,9 @@ the public API; breaking changes are listed explicitly.
   canonical JSON and digests, executor/validator/provider/resolver protocols, storage
   protocols, and the exception hierarchy.
 - `docs/architecture.md` with the module map and deviations from the specification.
+- Policy and state management (milestone M2): deterministic `PolicyEngine` (default
+  deny, capability intersection, autonomy minimum, gate computation, idempotency-key
+  requirement), `CapabilityRegistry`, `StaticPolicyResolver`, the execution and
+  approval transition tables, and pure transition functions.
+- Security test suite for capability escalation, autonomy escalation and untrusted
+  identities.

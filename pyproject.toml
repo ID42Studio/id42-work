@@ -50,6 +50,7 @@ include = ["src/", "tests/", "README.md", "LICENSE", "CHANGELOG.md", "SPEC.md"]
 [tool.pytest.ini_options]
 minversion = "8.0"
 testpaths = ["tests"]
+pythonpath = ["tests"]
 addopts = ["-ra", "--strict-markers", "--strict-config"]
 asyncio_mode = "strict"
 asyncio_default_fixture_loop_scope = "function"
@@ -86,6 +87,7 @@ ban-relative-imports = "all"
 
 [tool.pyright]
 include = ["src", "tests"]
+extraPaths = ["tests"]
 pythonVersion = "3.11"
 typeCheckingMode = "standard"
 strict = ["src"]

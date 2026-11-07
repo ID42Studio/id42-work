@@ -4,7 +4,7 @@ This document describes how the implementation maps to the engineering specifica
 ([SPEC.md](../SPEC.md), v0.1.1) and records every deviation or refinement, as the
 specification requires (section 5 and 26).
 
-## Module map (as of milestone M1)
+## Module map (as of milestone M2)
 
 | Module | Contents |
 |---|---|
@@ -13,7 +13,12 @@ specification requires (section 5 and 26).
 | `id42_work.definitions` | `Work`, `WorkRef`, `WorkDescriptor` |
 | `id42_work.policy` | `AutonomyLevel`, `ApprovalGate`, `ApprovalRequirement`, `ExecutionLimits`, `Policy`, `PolicyDecision`, `CapabilitySpec`, `CapabilityCall` |
 | `id42_work.actors` | `TrustedActor`, `ActorAuthority` |
-| `id42_work.states` | `ExecutionStatus`, terminal states |
+| `id42_work.states` | `ExecutionStatus`, terminal states, `TRANSITIONS` table |
+| `id42_work.state_machine` | `transition_execution`, `transition_approval` (pure transitions) |
+| `id42_work.policy.engine` | `PolicyEngine`, `default_gates`, `compute_gates`, `idempotency_key_required` |
+| `id42_work.policy.registry` | `CapabilityRegistry` |
+| `id42_work.policy.resolvers` | `StaticPolicyResolver` |
+| `id42_work.error_info` | `ExecutionErrorInfo`, `ErrorCause` |
 | `id42_work.execution` | `Execution`, `ExecutionErrorInfo` |
 | `id42_work.approvals` | `Approval`, `ApprovalStatus`, `compute_action_digest` |
 | `id42_work.outcomes` | `Outcome`, `ValidationResult`, `Severity` |
@@ -62,8 +67,36 @@ inconsistent record:
 | D12 | 3.5: approval fields | Added `Approval.reason_required` | The decision rules (7.3) need it on the record itself. |
 | D13 | 15: package tree | Added `identifiers.py`, `execution.py`, `_time.py`, `_model.py` | Shared formats and models needed a home that avoids import cycles. |
 
+| D14 | 4.2: `ExecutionStateMachine.transition(...)` persists and emits an event | `transition_execution` / `transition_approval` are pure: they check the table, protected fields, time order and every model invariant, and return the next record. The runner (M3) persists it with compare-and-set and emits the event. | Pure transitions can be tested exhaustively (all 169 execution pairs, all 36 approval pairs) without storage. |
+| D15 | 6.2: the decision holds gates and reasons | `PolicyDecision` also carries `idempotency_key_required` and, on `policy_error`, the `error` (`ExecutionErrorInfo`) | The runner must know whether a key is required before creating an execution (10.2), and evaluation errors must be preserved (6.3). |
+| D16 | 6.3: "untrusted identity means deny" | `PolicyEngine.evaluate` verifies the actor seal itself and raises `UntrustedActorError` | One choke point: no caller can evaluate a policy for an unverified actor. |
+| D17 | 16: denial reason `missing_capability:<name>` | Reasons distinguish the failing set: `missing_capability:` (actor grants), `policy_disallows_capability:`, `constraint_excludes_capability:`, `capability_unavailable:` (no provider), plus `no_policy` and `policy_error`. All missing capabilities are listed, in sorted order. | Operators need to know which side denied. |
+| D18 | 3.2: sensitive capability | A capability not in the `CapabilityRegistry` counts as side-effecting | Fail closed: unknown capabilities get the strictest treatment. |
+
 Grant format: a grant is either a capability name, `approve:<capability-or-work-id>`
 or `resume:<work-id>`. No other prefixes are accepted.
 
 Schema references in `WorkDescriptor` use `module:qualname`. Classes defined inside
 functions are accepted, but their references are not importable.
+
+## Policy evaluation (M2)
+
+`PolicyEngine.evaluate(work, actor, constraints=None)` runs these steps:
+
+1. Verify the actor seal and its validity window. On failure, raise
+   `UntrustedActorError`.
+2. Resolve the policy. `None` produces `no_policy`. A resolver exception or a non-`Policy`
+   value produces `policy_error`, with the error preserved.
+3. For each required capability `c` (sorted), check `c ∈ actor.grants`,
+   `c ∈ policy.allowed_capabilities`, `c ∈ constraints` (when given) and that a
+   provider supplies `c`. Every failure becomes a reason.
+4. If allowed, compute `effective_autonomy = min(policy.autonomy, work.autonomy_ceiling)`,
+   set `granted_capabilities = work.required_capabilities` exactly, and compute the gates:
+   - START for `MANUAL`;
+   - ACTION, for each required side-effecting capability, for `MANUAL` and `SUPERVISED`;
+   - OUTCOME for `MANUAL` and `GUIDED`;
+   - then the policy's explicit requirements, which apply at every level and replace
+     the default reviewer settings of the same gate.
+5. Any unexpected exception during steps 2 to 4 produces `policy_error`.
+
+Default gates use the reviewer grant `approve:<work_id>` and a 24-hour TTL.

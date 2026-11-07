@@ -52,8 +52,11 @@ from id42_work.policy import (
     ExecutionLimits,
     Policy,
     PolicyDecision,
+    StaticPolicyResolver,
 )
-from id42_work.states import ExecutionStatus
+from id42_work.policy.engine import PolicyEngine
+from id42_work.policy.registry import CapabilityRegistry
+from id42_work.states import TRANSITIONS, ExecutionStatus
 
 try:
     __version__: str = version("id42-work")
@@ -61,6 +64,7 @@ except PackageNotFoundError:  # pragma: no cover - only when running from an uni
     __version__ = "0.0.0"
 
 __all__ = [
+    "TRANSITIONS",
     "ActorAuthority",
     "Approval",
     "ApprovalError",
@@ -75,6 +79,7 @@ __all__ = [
     "CapabilityCall",
     "CapabilityDeniedError",
     "CapabilityProvider",
+    "CapabilityRegistry",
     "CapabilitySpec",
     "ConcurrentModificationError",
     "EventType",
@@ -99,9 +104,11 @@ __all__ = [
     "Policy",
     "PolicyDecision",
     "PolicyDeniedError",
+    "PolicyEngine",
     "PolicyError",
     "PolicyResolver",
     "Severity",
+    "StaticPolicyResolver",
     "StorageError",
     "TrustedActor",
     "UncertainOutcomeError",

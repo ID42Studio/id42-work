@@ -1,4 +1,8 @@
-"""Policy models and capability declarations."""
+"""Policy models, capability declarations and policy resolvers.
+
+``PolicyEngine`` and ``CapabilityRegistry`` depend on ``id42_work.contracts``; import
+them from ``id42_work`` (or their modules) to avoid an import cycle.
+"""
 
 from id42_work.policy.capabilities import CapabilityCall, CapabilitySpec
 from id42_work.policy.models import (
@@ -9,6 +13,7 @@ from id42_work.policy.models import (
     Policy,
     PolicyDecision,
 )
+from id42_work.policy.resolvers import StaticPolicyResolver
 
 __all__ = [
     "ApprovalGate",
@@ -19,4 +24,5 @@ __all__ = [
     "ExecutionLimits",
     "Policy",
     "PolicyDecision",
+    "StaticPolicyResolver",
 ]

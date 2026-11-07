@@ -39,6 +39,25 @@ class ApprovalStatus(Enum):
     CONSUMED = "CONSUMED"
 
 
+APPROVAL_TRANSITIONS: dict[ApprovalStatus, frozenset[ApprovalStatus]] = {
+    ApprovalStatus.PENDING: frozenset(
+        {
+            ApprovalStatus.GRANTED,
+            ApprovalStatus.REJECTED,
+            ApprovalStatus.EXPIRED,
+            ApprovalStatus.INVALIDATED,
+        }
+    ),
+    ApprovalStatus.GRANTED: frozenset(
+        {ApprovalStatus.CONSUMED, ApprovalStatus.EXPIRED, ApprovalStatus.INVALIDATED}
+    ),
+    ApprovalStatus.REJECTED: frozenset(),
+    ApprovalStatus.EXPIRED: frozenset(),
+    ApprovalStatus.INVALIDATED: frozenset(),
+    ApprovalStatus.CONSUMED: frozenset(),
+}
+"""Allowed approval status changes (specification 7.4)."""
+
 _DECIDED = frozenset({ApprovalStatus.GRANTED, ApprovalStatus.REJECTED, ApprovalStatus.CONSUMED})
 
 

@@ -1,7 +1,4 @@
-"""Execution status values (specification 4).
-
-The transition table and the state machine are introduced in milestone M2.
-"""
+"""Execution status values and the transition table (specification 4.1)."""
 
 from enum import Enum
 
@@ -39,3 +36,32 @@ TERMINAL_STATUSES: frozenset[ExecutionStatus] = frozenset(
         ExecutionStatus.CANCELLED,
     }
 )
+
+_S = ExecutionStatus
+
+TRANSITIONS: dict[ExecutionStatus, frozenset[ExecutionStatus]] = {
+    _S.CREATED: frozenset({_S.POLICY_CHECK, _S.CANCELLED}),
+    _S.POLICY_CHECK: frozenset({_S.DENIED, _S.READY}),
+    _S.READY: frozenset({_S.WAITING_APPROVAL, _S.RUNNING, _S.DENIED, _S.CANCELLED}),
+    _S.WAITING_APPROVAL: frozenset({_S.READY, _S.REJECTED, _S.CANCELLED}),
+    _S.RUNNING: frozenset({_S.WAITING_APPROVAL, _S.FAILED, _S.VALIDATING}),
+    _S.VALIDATING: frozenset({_S.VALIDATION_FAILED, _S.WAITING_REVIEW, _S.COMPLETED}),
+    _S.WAITING_REVIEW: frozenset({_S.COMPLETED, _S.REJECTED, _S.CANCELLED}),
+    _S.DENIED: frozenset(),
+    _S.FAILED: frozenset(),
+    _S.VALIDATION_FAILED: frozenset(),
+    _S.COMPLETED: frozenset(),
+    _S.REJECTED: frozenset(),
+    _S.CANCELLED: frozenset(),
+}
+"""Allowed execution transitions. Every other pair is forbidden.
+
+Business guards (e.g. ``WAITING_APPROVAL -> READY`` needs a granted approval) are
+enforced by the runner and the approval manager; this table only fixes which
+transitions can exist at all.
+"""
+
+
+def can_transition(from_status: ExecutionStatus, to_status: ExecutionStatus) -> bool:
+    """Whether ``from_status -> to_status`` is in the transition table."""
+    return to_status in TRANSITIONS[from_status]

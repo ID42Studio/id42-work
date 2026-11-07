@@ -7,6 +7,7 @@ from pydantic import Field, NonNegativeInt, model_validator
 
 from id42_work._model import FrozenModel
 from id42_work._time import UtcDatetime
+from id42_work.error_info import ErrorCause, ExecutionErrorInfo
 from id42_work.exceptions import (
     ApprovalRejectedError,
     ApprovalRequiredError,
@@ -25,7 +26,7 @@ from id42_work.outcomes.models import Outcome
 from id42_work.policy.models import AutonomyLevel
 from id42_work.states import ExecutionStatus
 
-_MAX_CAUSES = 10
+__all__ = ["ErrorCause", "Execution", "ExecutionErrorInfo"]
 
 _FAILURE_TYPES: dict[str, type[ExecutionError | CapabilityDeniedError]] = {
     cls.__name__: cls
@@ -36,39 +37,6 @@ _FAILURE_TYPES: dict[str, type[ExecutionError | CapabilityDeniedError]] = {
         CapabilityDeniedError,
     )
 }
-
-
-class ErrorCause(FrozenModel):
-    """One link of an exception cause chain."""
-
-    type: NonEmptyStr
-    message: str
-
-
-class ExecutionErrorInfo(FrozenModel):
-    """Serializable description of why an execution failed."""
-
-    type: NonEmptyStr
-    message: str
-    causes: tuple[ErrorCause, ...] = ()
-    requires_reconciliation: bool = False
-
-    @classmethod
-    def from_exception(cls, error: BaseException, *, requires_reconciliation: bool = False) -> Self:
-        """Describe ``error`` and its ``__cause__`` / ``__context__`` chain."""
-        causes: list[ErrorCause] = []
-        seen: set[int] = {id(error)}
-        current = error.__cause__ or error.__context__
-        while current is not None and id(current) not in seen and len(causes) < _MAX_CAUSES:
-            seen.add(id(current))
-            causes.append(ErrorCause(type=type(current).__name__, message=str(current)))
-            current = current.__cause__ or current.__context__
-        return cls(
-            type=type(error).__name__,
-            message=str(error),
-            causes=tuple(causes),
-            requires_reconciliation=requires_reconciliation,
-        )
 
 
 class Execution(FrozenModel):

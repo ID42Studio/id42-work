@@ -95,11 +95,13 @@ class InvalidStateTransitionError(ExecutionError):
         to_status: object,
         *,
         execution_id: UUID | None = None,
+        kind: str = "execution",
+        detail: str | None = None,
     ) -> None:
-        super().__init__(
-            f"invalid execution state transition: {from_status} -> {to_status}",
-            execution_id=execution_id,
-        )
+        message = f"invalid {kind} state transition: {from_status} -> {to_status}"
+        if detail:
+            message = f"{message} ({detail})"
+        super().__init__(message, execution_id=execution_id)
         self.from_status = from_status
         self.to_status = to_status
 
