@@ -1,5 +1,6 @@
-"""Storage protocols. In-memory implementations arrive in milestone M3."""
+"""Storage protocols and the in-memory implementation."""
 
+from id42_work.storage.memory import MemoryStorage
 from id42_work.storage.protocols import (
     ApprovalRepository,
     EventRepository,
@@ -9,6 +10,7 @@ from id42_work.storage.protocols import (
     IdempotencyRepository,
     IdempotencyScope,
     InputStore,
+    Storage,
 )
 
 __all__ = [
@@ -20,4 +22,6 @@ __all__ = [
     "IdempotencyRepository",
     "IdempotencyScope",
     "InputStore",
+    "MemoryStorage",
+    "Storage",
 ]

@@ -186,4 +186,6 @@ class PolicyEngine:
             policy_id=policy.id,
             policy_version=policy.version,
             idempotency_key_required=idempotency_key_required(work, policy, self._capabilities),
+            execution_limits=policy.execution_limits,
+            evidence_requirements=policy.evidence_requirements,
         )

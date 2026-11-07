@@ -1,0 +1,345 @@
+"""Capability calls made by executors and validators (specification 5.6, 8, 9)."""
+
+import re
+from collections.abc import Awaitable, Mapping
+from dataclasses import dataclass, field
+from datetime import datetime
+from types import MappingProxyType
+from typing import cast
+from uuid import UUID
+
+from pydantic import JsonValue, TypeAdapter, ValidationError
+
+from id42_work._recorder import ExecutionRecorder
+from id42_work.actors import TrustedActor
+from id42_work.canonical import digest
+from id42_work.context import ExecutionSuspended, InvokeFn
+from id42_work.events.models import EventType
+from id42_work.evidence.models import EvidenceType
+from id42_work.exceptions import (
+    CapabilityDeniedError,
+    ExecutionError,
+    ExecutionFailedError,
+    NonDeterministicExecutionError,
+    UncertainOutcomeError,
+)
+from id42_work.execution import Execution
+from id42_work.identifiers import ACTION_ID_PATTERN
+from id42_work.journal import JournalEntry, JournalStatus, operation_id
+from id42_work.policy.capabilities import CapabilityCall
+from id42_work.policy.models import ApprovalGate, PolicyDecision
+
+_JSON = TypeAdapter(JsonValue)
+_NOT_REPLAYED = object()
+_ACTION_ID_RE = re.compile(ACTION_ID_PATTERN)
+
+
+@dataclass(slots=True)
+class RunState:
+    """Bookkeeping for one executor run."""
+
+    used_action_ids: set[str] = field(default_factory=set[str])
+    actions: int = 0
+    suspended: bool = False
+    violation: BaseException | None = None
+    violation_reason: str = ""
+    reconcile: bool = False
+    side_effect_in_flight: bool = False
+
+    def fail(self, error: BaseException, reason: str) -> BaseException:
+        if self.violation is None:
+            self.violation = error
+            self.violation_reason = reason
+        return error
+
+
+class ActionInvoker:
+    """Executes ``context.invoke`` calls for one executor run (specification 5.6, 8).
+
+    Order of checks: suspension, action id, grant, uniqueness, limits, params
+    canonicalization, journal replay, ACTION gate, provider call. Security violations
+    are recorded in the run state, so an executor that catches the exception still
+    ends ``FAILED``.
+    """
+
+    def __init__(
+        self,
+        recorder: ExecutionRecorder,
+        execution: Execution,
+        decision: PolicyDecision,
+        actor: TrustedActor,
+        state: RunState,
+    ) -> None:
+        self._rec = recorder
+        self._execution = execution
+        self._eid = execution.execution_id
+        self._decision = decision
+        self._actor = actor
+        self._state = state
+
+    async def __call__(
+        self, capability: str, action_id: str, params: Mapping[str, object]
+    ) -> JsonValue:
+        params_digest = self._precheck(capability, action_id, params)
+        journal = self._rec.storage.executions
+        entries = {e.action_id: e for e in await journal.list_journal(self._eid)}
+        entry = entries.get(action_id)
+        payload: dict[str, JsonValue] = {
+            "action_id": action_id,
+            "capability": capability,
+            "operation_id": str(operation_id(self._eid, action_id)),
+            "params_digest": params_digest,
+        }
+        if entry is not None:
+            replayed = await self._replay(entry, capability, params_digest, payload)
+            if replayed is not _NOT_REPLAYED:
+                return cast("JsonValue", replayed)
+        await self._apply_gate(capability, action_id, params, params_digest, entry)
+        return await self._perform(
+            capability, action_id, params, params_digest=params_digest, entry=entry, payload=payload
+        )
+
+    def _precheck(self, capability: str, action_id: str, params: Mapping[str, object]) -> str:
+        state, eid = self._state, self._eid
+        if state.suspended:
+            raise ExecutionSuspended
+        if not valid_action_id(action_id):
+            msg = f"invalid action_id {action_id!r}"
+            raise state.fail(ExecutionError(msg, execution_id=eid), "invalid_action_id")
+        if capability not in self._decision.granted_capabilities:
+            msg = f"capability {capability!r} is not granted to this execution"
+            raise state.fail(CapabilityDeniedError(msg, execution_id=eid), "capability_denied")
+        if action_id in state.used_action_ids:
+            msg = f"action_id {action_id!r} was already used in this run"
+            raise state.fail(ExecutionError(msg, execution_id=eid), "duplicate_action_id")
+        state.used_action_ids.add(action_id)
+        state.actions += 1
+        max_actions = self._decision.execution_limits.max_actions
+        if max_actions is not None and state.actions > max_actions:
+            msg = f"execution exceeded max_actions={max_actions}"
+            raise state.fail(ExecutionFailedError(msg, execution_id=eid), "max_actions_exceeded")
+        try:
+            return digest(params)
+        except TypeError as error:
+            msg = f"params of action {action_id!r} cannot be canonicalized: {error}"
+            raise state.fail(
+                ExecutionError(msg, execution_id=eid), "invalid_action_params"
+            ) from error
+
+    async def _replay(
+        self,
+        entry: JournalEntry,
+        capability: str,
+        params_digest: str,
+        payload: dict[str, JsonValue],
+    ) -> object:
+        state, eid = self._state, self._eid
+        same = entry.params_digest == params_digest and entry.capability == capability
+        if entry.status is JournalStatus.SUCCEEDED:
+            if not same:
+                msg = f"replayed action {entry.action_id!r} differs from the journal"
+                raise state.fail(
+                    NonDeterministicExecutionError(msg, execution_id=eid), "non_deterministic"
+                )
+            await self._rec.emit(self._execution, EventType.ACTION_REPLAYED, payload)
+            return entry.result
+        if entry.status is JournalStatus.FAILED:
+            msg = f"replayed action {entry.action_id!r} failed previously"
+            if not same:
+                raise state.fail(
+                    NonDeterministicExecutionError(msg, execution_id=eid), "non_deterministic"
+                )
+            raise ExecutionFailedError(msg, execution_id=eid)
+        if entry.status in {JournalStatus.IN_FLIGHT, JournalStatus.UNCERTAIN}:
+            state.reconcile = True
+            msg = f"action {entry.action_id!r} has an uncertain outcome; reconciliation required"
+            raise state.fail(UncertainOutcomeError(msg, execution_id=eid), "uncertain_outcome")
+        return _NOT_REPLAYED
+
+    async def _apply_gate(
+        self,
+        capability: str,
+        action_id: str,
+        params: Mapping[str, object],
+        params_digest: str,
+        entry: JournalEntry | None,
+    ) -> None:
+        gate = self._decision.gate_for(ApprovalGate.ACTION, capability)
+        if gate is None:
+            return
+        rec = self._rec
+        action_digest = rec.action_digest(
+            self._execution, ApprovalGate.ACTION, action_id, capability, params
+        )
+        if await rec.check_gate(self._execution, gate, action_id, action_digest, params):
+            return
+        pending = journal_entry(
+            self._eid, action_id, capability, params_digest, JournalStatus.PENDING_APPROVAL
+        )
+        journal = rec.storage.executions
+        if entry is None:
+            await journal.append_journal(pending)
+        else:
+            await journal.update_journal(pending, expected_status=entry.status)
+        self._state.suspended = True
+        raise ExecutionSuspended
+
+    async def _perform(
+        self,
+        capability: str,
+        action_id: str,
+        params: Mapping[str, object],
+        *,
+        params_digest: str,
+        entry: JournalEntry | None,
+        payload: dict[str, JsonValue],
+    ) -> JsonValue:
+        rec, state, eid = self._rec, self._state, self._eid
+        registry = rec.capabilities
+        journal = rec.storage.executions
+        provider = registry.provider(capability)
+        if provider is None:  # pragma: no cover - guaranteed by the policy check
+            msg = f"capability {capability!r} has no provider"
+            raise state.fail(CapabilityDeniedError(msg, execution_id=eid), "capability_unavailable")
+        side_effecting = registry.is_side_effecting(capability)
+        started = rec.now()
+        in_flight = journal_entry(
+            eid, action_id, capability, params_digest, JournalStatus.IN_FLIGHT, started_at=started
+        )
+        if entry is None:
+            await journal.append_journal(in_flight)
+        else:
+            await journal.update_journal(in_flight, expected_status=entry.status)
+        await rec.emit(self._execution, EventType.ACTION_INVOKED, payload)
+        call = CapabilityCall(
+            execution_id=eid,
+            action_id=action_id,
+            operation_id=operation_id(eid, action_id),
+            actor_id=self._actor.actor_id,
+            tenant_id=self._actor.tenant_id,
+        )
+        raw = await self._call_provider(
+            provider.invoke(capability, MappingProxyType(dict(params)), call),
+            in_flight,
+            payload,
+            side_effecting=side_effecting,
+        )
+        try:
+            result = _JSON.validate_python(raw)
+            result_digest = digest(result, floats="repr")
+        except (ValidationError, TypeError) as error:
+            await rec.settle(in_flight, JournalStatus.FAILED, error)
+            state.reconcile = state.reconcile or side_effecting
+            msg = f"capability {capability!r} returned a non-JSON result"
+            raise state.fail(
+                ExecutionFailedError(msg, execution_id=eid), "invalid_capability_result"
+            ) from error
+        done = JournalEntry.model_validate(
+            {
+                **in_flight.model_dump(),
+                "status": JournalStatus.SUCCEEDED,
+                "result": result,
+                "result_digest": result_digest,
+                "finished_at": max(rec.now(), started),
+            }
+        )
+        await journal.update_journal(done, expected_status=JournalStatus.IN_FLIGHT)
+        await rec.emit(
+            self._execution, EventType.ACTION_COMPLETED, {**payload, "result_digest": result_digest}
+        )
+        await rec.add_evidence(
+            eid,
+            EvidenceType.TOOL_RESULT,
+            source=f"capability:{capability}",
+            content_digest=result_digest,
+            metadata={"action_id": action_id, "operation_id": str(call.operation_id)},
+        )
+        return result
+
+    async def _call_provider(
+        self,
+        call: Awaitable[JsonValue],
+        in_flight: JournalEntry,
+        payload: dict[str, JsonValue],
+        *,
+        side_effecting: bool,
+    ) -> object:
+        rec, state = self._rec, self._state
+        state.side_effect_in_flight = side_effecting
+        try:
+            return await call
+        except UncertainOutcomeError as error:
+            await rec.settle(in_flight, JournalStatus.UNCERTAIN, error)
+            await rec.emit(self._execution, EventType.ACTION_UNCERTAIN, payload)
+            state.reconcile = True
+            state.fail(error, "uncertain_outcome")
+            raise
+        except Exception as error:
+            await rec.settle(in_flight, JournalStatus.FAILED, error)
+            await rec.emit(self._execution, EventType.ACTION_FAILED, payload)
+            raise
+        except BaseException as error:  # cancellation or timeout while in flight
+            status = JournalStatus.UNCERTAIN if side_effecting else JournalStatus.FAILED
+            await rec.settle(in_flight, status, error)
+            if side_effecting:
+                state.reconcile = True
+                await rec.emit(self._execution, EventType.ACTION_UNCERTAIN, payload)
+            raise
+        finally:
+            state.side_effect_in_flight = False
+
+
+def valid_action_id(action_id: object) -> bool:
+    """Whether ``action_id`` is a well-formed executor action id."""
+    return isinstance(action_id, str) and _ACTION_ID_RE.fullmatch(action_id) is not None
+
+
+def journal_entry(
+    execution_id: UUID,
+    action_id: str,
+    capability: str,
+    params_digest: str,
+    status: JournalStatus,
+    *,
+    started_at: datetime | None = None,
+) -> JournalEntry:
+    return JournalEntry(
+        execution_id=execution_id,
+        action_id=action_id,
+        capability=capability,
+        params_digest=params_digest,
+        operation_id=operation_id(execution_id, action_id),
+        status=status,
+        started_at=started_at,
+    )
+
+
+def make_validation_invoke(
+    recorder: ExecutionRecorder, execution: Execution, decision: PolicyDecision
+) -> InvokeFn:
+    eid = execution.execution_id
+
+    async def invoke(capability: str, action_id: str, params: Mapping[str, object]) -> JsonValue:
+        if capability not in decision.granted_capabilities:
+            msg = f"capability {capability!r} is not granted to this execution"
+            raise CapabilityDeniedError(msg, execution_id=eid)
+        if recorder.capabilities.is_side_effecting(capability):
+            msg = f"validators may only use read-only capabilities, not {capability!r}"
+            raise CapabilityDeniedError(msg, execution_id=eid)
+        provider = recorder.capabilities.provider(capability)
+        if provider is None or not valid_action_id(action_id):
+            msg = f"capability {capability!r} or action_id {action_id!r} is invalid"
+            raise CapabilityDeniedError(msg, execution_id=eid)
+        validation_action = f"validation:{action_id}"
+        call = CapabilityCall(
+            execution_id=eid,
+            action_id=validation_action,
+            operation_id=operation_id(eid, validation_action),
+            actor_id=execution.actor_id,
+            tenant_id=execution.tenant_id,
+        )
+        return _JSON.validate_python(
+            await provider.invoke(capability, MappingProxyType(dict(params)), call)
+        )
+
+    return invoke

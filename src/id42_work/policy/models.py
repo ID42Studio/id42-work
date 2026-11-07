@@ -123,6 +123,8 @@ class PolicyDecision(FrozenModel):
     policy_id: Identifier | None = None
     policy_version: SemVer | None = None
     idempotency_key_required: bool = False
+    execution_limits: ExecutionLimits = Field(default_factory=ExecutionLimits)
+    evidence_requirements: frozenset[EvidenceType] = frozenset()
     error: ExecutionErrorInfo | None = None
 
     @model_validator(mode="after")

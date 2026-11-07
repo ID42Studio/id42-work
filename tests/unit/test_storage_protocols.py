@@ -1,9 +1,9 @@
 from uuid import uuid4
 
 import pytest
-from _factories import DIGEST_A
 from pydantic import ValidationError
 
+from _factories import DIGEST_A
 from id42_work import storage
 from id42_work.storage import IdempotencyRecord, IdempotencyScope
 
@@ -18,6 +18,8 @@ def test_storage_protocols_are_exported() -> None:
         "IdempotencyRepository",
         "IdempotencyScope",
         "InputStore",
+        "MemoryStorage",
+        "Storage",
     }
 
 

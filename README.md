@@ -5,10 +5,11 @@
 A lightweight Python SDK for reliable, governed execution of work by software systems
 and AI agents.
 
-> **Status: pre-alpha, under construction.** Nothing described below is implemented
-> yet. The package is not published on PyPI. The design is specified in
-> [SPEC.md](SPEC.md) (specification v0.1.1), and this README will grow with each
-> milestone.
+> **Status: pre-alpha, under construction.** The core contracts, the policy engine
+> and the in-memory runtime exist. Approval decisions and resumption are not
+> implemented yet. The package is not published on PyPI. The design is specified in
+> [SPEC.md](SPEC.md) (specification v0.1.1); implementation notes are in
+> [docs/architecture.md](docs/architecture.md).
 
 ## The idea
 

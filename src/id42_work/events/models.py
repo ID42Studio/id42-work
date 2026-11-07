@@ -31,6 +31,7 @@ class EventType(Enum):
     ACTION_INVOKED = "work.action.invoked"
     ACTION_REPLAYED = "work.action.replayed"
     ACTION_COMPLETED = "work.action.completed"
+    ACTION_FAILED = "work.action.failed"
     ACTION_UNCERTAIN = "work.action.uncertain"
     EXECUTION_SUSPENDED = "work.execution.suspended"
     EXECUTION_FAILED = "work.execution.failed"

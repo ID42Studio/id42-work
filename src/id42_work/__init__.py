@@ -13,7 +13,7 @@ from id42_work.contracts import (
     Validator,
 )
 from id42_work.definitions import Work, WorkDescriptor, WorkRef
-from id42_work.events import EventType, WorkEvent
+from id42_work.events import EventDispatcher, EventType, WorkEvent
 from id42_work.evidence import Evidence, EvidenceType
 from id42_work.exceptions import (
     ApprovalError,
@@ -56,7 +56,10 @@ from id42_work.policy import (
 )
 from id42_work.policy.engine import PolicyEngine
 from id42_work.policy.registry import CapabilityRegistry
+from id42_work.registry import WorkBinding, WorkRegistry
+from id42_work.runner import WorkRunner
 from id42_work.states import TRANSITIONS, ExecutionStatus
+from id42_work.storage import MemoryStorage
 
 try:
     __version__: str = version("id42-work")
@@ -82,6 +85,7 @@ __all__ = [
     "CapabilityRegistry",
     "CapabilitySpec",
     "ConcurrentModificationError",
+    "EventDispatcher",
     "EventType",
     "Evidence",
     "EvidenceType",
@@ -97,6 +101,7 @@ __all__ = [
     "IdempotencyConflictError",
     "InputValidationError",
     "InvalidStateTransitionError",
+    "MemoryStorage",
     "NonDeterministicExecutionError",
     "Outcome",
     "OutcomeError",
@@ -117,11 +122,14 @@ __all__ = [
     "ValidationResult",
     "Validator",
     "Work",
+    "WorkBinding",
     "WorkDefinitionError",
     "WorkDescriptor",
     "WorkError",
     "WorkEvent",
     "WorkRef",
     "WorkRegistrationError",
+    "WorkRegistry",
+    "WorkRunner",
     "__version__",
 ]

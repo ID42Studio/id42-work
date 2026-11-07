@@ -23,3 +23,9 @@ the public API; breaking changes are listed explicitly.
   approval transition tables, and pure transition functions.
 - Security test suite for capability escalation, autonomy escalation and untrusted
   identities.
+- Execution runtime (milestone M3): `WorkRegistry`, `WorkRunner` (async and sync),
+  restricted execution and validation contexts, action journal, ACTION/START/OUTCOME
+  gates that suspend executions, output-schema and custom validators, evidence
+  records, structured and redacted events with an `EventDispatcher`, idempotency with
+  conflict detection, and `MemoryStorage`.
+- Integration, concurrency and runtime security tests.

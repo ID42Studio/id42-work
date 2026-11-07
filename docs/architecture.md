@@ -4,7 +4,7 @@ This document describes how the implementation maps to the engineering specifica
 ([SPEC.md](../SPEC.md), v0.1.1) and records every deviation or refinement, as the
 specification requires (section 5 and 26).
 
-## Module map (as of milestone M2)
+## Module map (as of milestone M3)
 
 | Module | Contents |
 |---|---|
@@ -19,6 +19,14 @@ specification requires (section 5 and 26).
 | `id42_work.policy.registry` | `CapabilityRegistry` |
 | `id42_work.policy.resolvers` | `StaticPolicyResolver` |
 | `id42_work.error_info` | `ExecutionErrorInfo`, `ErrorCause` |
+| `id42_work.registry` | `WorkRegistry`, `WorkBinding` |
+| `id42_work.runner` | `WorkRunner` (public entry point) |
+| `id42_work.context` | `RunContext`, `ValidatorContext` (the contexts handed to user code) |
+| `id42_work._invoker` | Capability calls: checks, journal, replay, ACTION gates, provider calls (internal) |
+| `id42_work._recorder` | Transitions, events, evidence, journal settlement, approval gates (internal) |
+| `id42_work.outcomes.validators` | Built-in output-schema validator |
+| `id42_work.events.redaction` / `.dispatcher` | `default_redactor`, `EventDispatcher` |
+| `id42_work.storage.memory` | `MemoryStorage` and the in-memory repositories |
 | `id42_work.execution` | `Execution`, `ExecutionErrorInfo` |
 | `id42_work.approvals` | `Approval`, `ApprovalStatus`, `compute_action_digest` |
 | `id42_work.outcomes` | `Outcome`, `ValidationResult`, `Severity` |
@@ -73,6 +81,17 @@ inconsistent record:
 | D17 | 16: denial reason `missing_capability:<name>` | Reasons distinguish the failing set: `missing_capability:` (actor grants), `policy_disallows_capability:`, `constraint_excludes_capability:`, `capability_unavailable:` (no provider), plus `no_policy` and `policy_error`. All missing capabilities are listed, in sorted order. | Operators need to know which side denied. |
 | D18 | 3.2: sensitive capability | A capability not in the `CapabilityRegistry` counts as side-effecting | Fail closed: unknown capabilities get the strictest treatment. |
 
+| D19 | Milestones M3/M4 | M3 ships `run()` end to end, including gates: the runner creates the pending approval and suspends. Approval decisions, `resume()` (replay) and `cancel()` arrive in M4. | Gates are never skipped. Until M4, a gated execution simply stays waiting. |
+| D20 | 11: `work.definition.registered` / `replaced` events | Not emitted yet | `WorkRegistry` is synchronous and holds no storage; registry events need a registry-level event sink (planned). |
+| D21 | 5.5: `runner.evidence(...)`, `runner.events(...)` | `get`, `events`, `evidence`, `journal` and `approvals_for` are `async` | Storage is asynchronous (D7). |
+| D22 | 5.5: create the execution, then evaluate the policy | The policy is evaluated before the execution is created; `CREATED -> POLICY_CHECK -> READY/DENIED` then records that decision | The idempotency-key requirement depends on the decision (10.2) and must fail before any record exists. |
+| D23 | 9: evidence requirements checked after validators | When an OUTCOME gate applies, `APPROVAL_DECISION` is excluded from that check | The review decision itself produces that evidence. |
+| D24 | 3.8: floats rejected | Capability results may contain floats (digested with `floats="repr"`). Action params, inputs and gate digests still reject floats. | Results are replayed, not authorized; external systems commonly return floats. |
+| D25 | 5.6: invoke errors fail the execution | Violations (ungranted capability, invalid or duplicate action id, non-canonical params, `max_actions`, non-deterministic replay, uncertain outcome) are recorded in the run state, so the execution ends `FAILED` even if the executor catches the exception | An executor must not be able to hide a security violation. |
+| D26 | 3.4: `last_event_sequence` | Sequence number of the event emitted by the latest transition | Updating the record for every event would double the writes. |
+| D27 | 11: event list | Added `work.action.failed` | A provider error that the executor handles is not an uncertain outcome. |
+| D28 | 9: validator capability calls | Not journaled; the provider receives `action_id="validation:<id>"` | Validators are read-only and are not replayed. |
+
 Grant format: a grant is either a capability name, `approve:<capability-or-work-id>`
 or `resume:<work-id>`. No other prefixes are accepted.
 
@@ -100,3 +119,46 @@ functions are accepted, but their references are not importable.
 5. Any unexpected exception during steps 2 to 4 produces `policy_error`.
 
 Default gates use the reviewer grant `approve:<work_id>` and a 24-hour TTL.
+
+## Runtime (M3)
+
+`WorkRunner.run` follows this order:
+
+1. Verify the actor. Resolve the binding. Validate the input (instances are
+   re-validated from their data). Fingerprint it.
+2. Evaluate the policy. Enforce the idempotency-key requirement. Reserve the scope.
+   For an existing scope, return the existing execution (or raise
+   `IdempotencyConflictError`).
+3. Store the input. Create the execution (`CREATED`). Record `INPUT_REFERENCE`
+   evidence. Move to `POLICY_CHECK`, then `DENIED` or `READY`.
+4. START gate: consume a matching granted approval, or request one and move to
+   `WAITING_APPROVAL`.
+5. `RUNNING`: execute under `asyncio.timeout`. Every `context.invoke` goes through
+   `ActionInvoker`, in this order:
+   - suspension check;
+   - action-id format;
+   - grant;
+   - uniqueness;
+   - `max_actions`;
+   - params digest;
+   - journal replay;
+   - ACTION gate;
+   - journal `IN_FLIGHT`;
+   - provider call;
+   - journal `SUCCEEDED`, `FAILED` or `UNCERTAIN`;
+   - `TOOL_RESULT` evidence.
+6. Precedence after the executor returns: a recorded violation means `FAILED`;
+   otherwise a suspension means `WAITING_APPROVAL`; otherwise an exception means
+   `FAILED` (reason `timeout`, `executor_error` and so on); otherwise the run moves to
+   `VALIDATING`.
+7. Validation runs the schema validator (re-validating the output, exact type
+   required), then the registered validators. A `VALIDATION_REPORT` evidence record is
+   written. The run ends `VALIDATION_FAILED`, `WAITING_REVIEW` (OUTCOME gate) or
+   `COMPLETED`.
+
+Every transition is persisted with compare-and-set, then exactly one event is
+appended (gapless per execution), then subscribers are notified.
+
+Interrupted side effects: cancellation or timeout during a side-effecting provider
+call marks the action `UNCERTAIN` and the execution `requires_reconciliation`. The SDK
+never retries.
