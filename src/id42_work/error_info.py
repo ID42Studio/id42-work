@@ -2,6 +2,8 @@
 
 from typing import Self
 
+from pydantic import ValidationError
+
 from id42_work._model import FrozenModel
 from id42_work.identifiers import NonEmptyStr
 
@@ -39,3 +41,12 @@ class ExecutionErrorInfo(FrozenModel):
             causes=tuple(causes),
             requires_reconciliation=requires_reconciliation,
         )
+
+
+def describe_validation_error(error: ValidationError) -> str:
+    """Summarize a Pydantic error by location and reason, never by input value."""
+    parts = [
+        f"{'.'.join(str(part) for part in item['loc']) or '<root>'}: {item['msg']}"
+        for item in error.errors(include_input=False, include_url=False)
+    ]
+    return "; ".join(parts)

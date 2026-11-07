@@ -38,6 +38,7 @@ from id42_work.approvals.models import (
 from id42_work.canonical import digest
 from id42_work.context import ExecutionSuspended, RunContext, ValidatorContext
 from id42_work.contracts import PolicyResolver, Validator
+from id42_work.error_info import describe_validation_error
 from id42_work.events.dispatcher import EventDispatcher
 from id42_work.events.models import EventType, WorkEvent
 from id42_work.events.redaction import Redactor, default_redactor
@@ -715,7 +716,7 @@ def _validate_input(
     try:
         return schema.model_validate(data)
     except ValidationError as error:
-        msg = f"input does not match {schema.__name__}: {error}"
+        msg = f"input does not match {schema.__name__}: {describe_validation_error(error)}"
         raise InputValidationError(msg) from error
 
 

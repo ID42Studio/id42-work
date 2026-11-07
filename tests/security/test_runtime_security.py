@@ -286,3 +286,26 @@ async def test_events_never_contain_raw_input_or_results() -> None:
     dumped = json.dumps([e.model_dump(mode="json") for e in events])
     for raw in ("INV-1001", "SUP-001", "1250.00", "move_id"):
         assert raw not in dumped
+
+
+async def test_validation_errors_do_not_echo_input_values() -> None:
+    from id42_work import InputValidationError  # noqa: PLC0415
+
+    env = Env()
+    sensitive = "card-4111111111111111"
+    with pytest.raises(InputValidationError) as info:
+        await env.run(
+            {"invoice_number": "INV-1", "supplier_id": "S", "currency": "BRL", "amount": sensitive}
+        )
+    assert sensitive not in str(info.value)
+    assert "amount" in str(info.value)
+
+    async def body(data: Any, context: ExecutionContext) -> Any:
+        return {"invoice_number": "INV-1001", "supplier_id": sensitive, "status": ["not-a-string"]}
+
+    from id42_work.outcomes.validators import validate_output_schema  # noqa: PLC0415
+
+    _, result = validate_output_schema(await body(None, None), InvoiceOutput)  # type: ignore[arg-type]
+    assert not result.passed
+    assert "status" in result.message
+    assert "not-a-string" not in result.message

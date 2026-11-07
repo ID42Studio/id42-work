@@ -2,6 +2,7 @@
 
 from pydantic import BaseModel, ValidationError
 
+from id42_work.error_info import describe_validation_error
 from id42_work.outcomes.models import Severity, ValidationResult
 
 SCHEMA_VALIDATOR_ID = "schema"
@@ -29,7 +30,8 @@ def validate_output_schema(
         else:
             validated = output_schema.model_validate(output)
     except ValidationError as error:
-        return None, _failed(f"output does not match {output_schema.__name__}: {error}")
+        summary = describe_validation_error(error)
+        return None, _failed(f"output does not match {output_schema.__name__}: {summary}")
     return validated, ValidationResult(
         validator_id=SCHEMA_VALIDATOR_ID,
         passed=True,
