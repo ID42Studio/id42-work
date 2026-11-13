@@ -548,6 +548,10 @@ class WorkRunner:
         produced_at = self._rec.now()
         output_model, schema_result = validate_output_schema(output, binding.work.output_schema)
         results = [schema_result]
+        limit = decision.execution_limits.timeout
+        deadline = (
+            asyncio.get_running_loop().time() + limit.total_seconds() if limit is not None else None
+        )
         if output_model is not None:
             context = ValidatorContext(
                 execution_id=execution.execution_id,
@@ -557,7 +561,7 @@ class WorkRunner:
                 invoke=make_validation_invoke(self._rec, execution, decision),
             )
             for validator in binding.validators:
-                results.append(await _run_validator(validator, output_model, context))
+                results.append(await _run_validator(validator, output_model, context, deadline))
 
         report_id = await self._rec.add_evidence(
             execution.execution_id,
@@ -746,17 +750,32 @@ def _scope(
 
 
 async def _run_validator(
-    validator: Validator, output: BaseModel, context: ValidatorContext
+    validator: Validator,
+    output: BaseModel,
+    context: ValidatorContext,
+    deadline: float | None,
 ) -> ValidationResult:
+    timeout_cm = asyncio.timeout_at(deadline)
     try:
-        result = await validator.validate(output, context)
-    except Exception as error:  # noqa: BLE001 - a raising validator is a failed check
+        async with timeout_cm:
+            result = await validator.validate(output, context)
+    except Exception as error:  # a raising validator is a failed check
+        if timeout_cm.expired():
+            message = "validator timed out (execution_limits.timeout)"
+        else:
+            # The exception text may quote output or input values; keep it in the logs only.
+            _logger.warning(
+                "validator raised",
+                extra={"validator.id": validator.validator_id},
+                exc_info=error,
+            )
+            message = f"validator raised {type(error).__name__}"
         return ValidationResult(
             validator_id=validator.validator_id,
             passed=False,
             severity=Severity.ERROR,
             required=validator.required,
-            message=f"validator raised {type(error).__name__}: {error}",
+            message=message,
         )
     if not isinstance(result, ValidationResult):  # pyright: ignore[reportUnnecessaryIsInstance]
         return ValidationResult(

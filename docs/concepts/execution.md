@@ -41,6 +41,14 @@ same input returns the existing execution, whatever its state. The same scope wi
 different input raises `IdempotencyConflictError`. Input fingerprints are exact: the
 amounts `"1250.00"` and `"1250.0"` count as different inputs.
 
+"Whatever its state" includes `DENIED`. A key used by a call that the policy denied
+stays bound to that denied execution: retrying with the same key after granting the
+missing capability returns the same `DENIED` execution. Use a new key once the cause
+of a denial is fixed.
+
+The scope does not include the actor. Another actor in the same tenant who is allowed
+to run the work and submits the same key and input receives the existing execution.
+
 ## Failures
 
 `execution.error` records the error type, its message, the cause chain and
