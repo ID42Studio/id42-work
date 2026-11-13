@@ -14,7 +14,12 @@ A validator is any object with `validator_id`, `required` and
 `async def validate(output, context) -> ValidationResult`.
 
 - A validator that raises, or returns something other than a `ValidationResult`,
-  counts as a failed check.
+  counts as a failed check. The recorded message names only the exception type; the
+  exception itself is logged on the `id42_work.runner` logger, because its text may
+  quote input or output values.
+- The policy's `execution_limits.timeout` also bounds the validation phase, measured
+  from its start. A validator still running at the deadline counts as a failed check
+  with the message `validator timed out (execution_limits.timeout)`.
 - `context.invoke` gives validators read-only capabilities only.
 
 `outcome.verified` is derived, not declared: it is true when every required result

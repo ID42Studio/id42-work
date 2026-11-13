@@ -8,7 +8,7 @@ A `Policy` belongs to the host application. The runner obtains it from a
 | `autonomy` | `MANUAL`, `SUPERVISED`, `GUIDED` or `AUTONOMOUS`. |
 | `allowed_capabilities` | Upper bound for works under this policy. |
 | `approval_requirements` | Extra gates. They apply at every autonomy level. |
-| `execution_limits` | `timeout` and `max_actions`. |
+| `execution_limits` | `timeout` (applied separately to the executor run and to the validation phase) and `max_actions`. |
 | `evidence_requirements` | Evidence types that must exist before completion. |
 | `require_idempotency_key` | Override. By default, a key is required when any required capability is side-effecting. |
 
