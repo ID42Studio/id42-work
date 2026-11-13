@@ -7,6 +7,20 @@ the public API; breaking changes are listed explicitly.
 
 ## [Unreleased]
 
+### Fixed
+
+- The validation phase is now bounded by `execution_limits.timeout`. A hanging
+  validator previously kept the execution in `VALIDATING` indefinitely; it now counts
+  as a failed check.
+- A raising validator no longer copies the exception text into the recorded
+  `ValidationResult`, which could expose input or output values. The message names the
+  exception type, and the exception is logged instead.
+
+### Documentation
+
+- Idempotency: a key reused after a denial returns the same `DENIED` execution, and
+  the scope is shared by every actor of a tenant.
+
 ## [0.1.0rc1] - 2026-11-07
 
 First release candidate. Pre-alpha: in-memory storage only; see `docs/security.md`.

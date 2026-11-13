@@ -309,3 +309,28 @@ async def test_validation_errors_do_not_echo_input_values() -> None:
     assert not result.passed
     assert "status" in result.message
     assert "not-a-string" not in result.message
+
+
+async def test_validator_exceptions_do_not_echo_values_into_the_outcome(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    sensitive = "card-4111111111111111"
+
+    class LeakyValidator:
+        validator_id = "leaky"
+        required = True
+
+        async def validate(self, output: BaseModel, context: Any) -> Any:
+            raise ValueError(f"unexpected supplier {sensitive}")
+
+    env = Env(validators=[LeakyValidator()])
+    with caplog.at_level("WARNING", logger="id42_work.runner"):
+        execution = await env.run()
+    assert execution.outcome is not None
+    (failed,) = execution.outcome.failed_results
+    assert failed.message == "validator raised ValueError"
+    assert sensitive not in execution.model_dump_json()
+    evidence = await env.runner.evidence(execution.execution_id)
+    assert sensitive not in json.dumps([e.model_dump(mode="json") for e in evidence])
+    (record,) = [r for r in caplog.records if r.getMessage() == "validator raised"]
+    assert record.exc_info is not None

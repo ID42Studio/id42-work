@@ -106,6 +106,7 @@ inconsistent record:
 | D37 | 15: examples are standalone files | The invoice examples share `examples/_invoice.py` (schemas, executor, validators, wiring) | Avoids five copies of the same setup; each example still runs with `python examples/<name>.py`. |
 
 | D38 | 12, 14: optional OpenTelemetry integration (`id42-work[otel]`) | Not in 0.1.0. Structured events and `EventDispatcher` subscribers are the extension point; the `otel` extra was removed so that it promises nothing. | Deferred to v0.3 (roadmap) to keep the release candidate honest. |
+| D39 | 3.2: `timeout` bounds the executor run; 9: a raising validator is a failed check | `timeout` also bounds the validation phase (a separate budget, from its start). A validator still running at the deadline fails its check. A raising validator's result names only the exception type; the exception is logged. | Without a bound, one hanging validator left the execution in `VALIDATING` forever. Exception text may quote input or output values. |
 
 The M3 note on expiry is resolved: an expired PENDING approval cancels its execution
 (reason `approval_expired`), as specification 7.5 requires. An expired GRANTED approval
@@ -171,7 +172,8 @@ Default gates use the reviewer grant `approve:<work_id>` and a 24-hour TTL.
    `FAILED` (reason `timeout`, `executor_error` and so on); otherwise the run moves to
    `VALIDATING`.
 7. Validation runs the schema validator (re-validating the output, exact type
-   required), then the registered validators. A `VALIDATION_REPORT` evidence record is
+   required), then the registered validators, all within one `timeout` budget (D39).
+   A `VALIDATION_REPORT` evidence record is
    written. The run ends `VALIDATION_FAILED`, `WAITING_REVIEW` (OUTCOME gate) or
    `COMPLETED`.
 
