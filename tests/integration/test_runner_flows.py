@@ -261,6 +261,64 @@ async def test_broken_validators_fail_closed(validator: Any) -> None:
     assert failed.validator_id == validator.validator_id
 
 
+class HangingValidator:
+    validator_id = "hanging"
+
+    def __init__(self, *, required: bool = True) -> None:
+        self.required = required
+
+    async def validate(self, output: BaseModel, context: Any) -> Any:
+        await asyncio.sleep(5)
+
+
+async def test_hanging_validator_is_bounded_by_the_execution_timeout() -> None:
+    from datetime import timedelta  # noqa: PLC0415
+
+    from id42_work import ExecutionLimits  # noqa: PLC0415
+
+    policy = _policy(
+        AutonomyLevel.AUTONOMOUS,
+        execution_limits=ExecutionLimits(timeout=timedelta(milliseconds=20)),
+    )
+    env = Env(policy=policy, validators=[HangingValidator(), AmountRule()])
+    execution = await asyncio.wait_for(env.run(), timeout=2)
+    assert execution.status is S.VALIDATION_FAILED
+    assert execution.status_reason == "validation_failed"
+    assert execution.outcome is not None
+    failed = {r.validator_id: r.message for r in execution.outcome.failed_results}
+    assert failed == {"hanging": "validator timed out (execution_limits.timeout)"}
+
+
+async def test_hanging_advisory_validator_does_not_block() -> None:
+    from datetime import timedelta  # noqa: PLC0415
+
+    from id42_work import ExecutionLimits  # noqa: PLC0415
+
+    policy = _policy(
+        AutonomyLevel.AUTONOMOUS,
+        execution_limits=ExecutionLimits(timeout=timedelta(milliseconds=20)),
+    )
+    env = Env(policy=policy, validators=[HangingValidator(required=False)])
+    execution = await asyncio.wait_for(env.run(), timeout=2)
+    assert execution.status is S.COMPLETED
+    assert execution.outcome is not None
+    assert [r.validator_id for r in execution.outcome.failed_results] == ["hanging"]
+
+
+async def test_validator_raising_timeout_error_itself_is_reported_as_raised() -> None:
+    class RemoteTimeout:
+        validator_id = "remote"
+        required = True
+
+        async def validate(self, output: BaseModel, context: Any) -> Any:
+            raise TimeoutError("rules service timed out")
+
+    execution = await Env(validators=[RemoteTimeout()]).run()
+    assert execution.outcome is not None
+    (failed,) = execution.outcome.failed_results
+    assert failed.message == "validator raised TimeoutError"
+
+
 class ExtendedOutput(InvoiceOutput):
     internal_note: str = "x"
 
