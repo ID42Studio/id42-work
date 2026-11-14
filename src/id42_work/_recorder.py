@@ -21,7 +21,7 @@ from id42_work.events.dispatcher import EventDispatcher
 from id42_work.events.models import EventType, WorkEvent
 from id42_work.events.redaction import Redactor
 from id42_work.evidence.models import Evidence, EvidenceType
-from id42_work.exceptions import ConcurrentModificationError, StorageError
+from id42_work.exceptions import ConcurrentModificationError, StorageError, UncertainOutcomeError
 from id42_work.execution import Execution
 from id42_work.journal import JournalEntry, JournalStatus
 from id42_work.policy.models import ApprovalGate, ApprovalRequirement
@@ -51,6 +51,35 @@ class ExecutionRecorder:
         self.dispatcher = dispatcher
         self._clock = clock
         self._redactor = redactor
+
+    async def mark_action_uncertain(self, execution: Execution, entry: JournalEntry) -> None:
+        """Move an ``IN_FLIGHT`` action to ``UNCERTAIN`` and record the event.
+
+        Used when resume finds a call the previous process did not finish. The action
+        is not retried.
+        """
+        message = f"action {entry.action_id!r} has an uncertain outcome; reconciliation required"
+        error = UncertainOutcomeError(message, execution_id=execution.execution_id)
+        uncertain = JournalEntry.model_validate(
+            {
+                **entry.model_dump(),
+                "status": JournalStatus.UNCERTAIN,
+                "error": ExecutionErrorInfo.from_exception(error, requires_reconciliation=True),
+            }
+        )
+        await self.storage.executions.update_journal(
+            uncertain, expected_status=JournalStatus.IN_FLIGHT
+        )
+        await self.emit(
+            execution,
+            EventType.ACTION_UNCERTAIN,
+            {
+                "action_id": entry.action_id,
+                "capability": entry.capability,
+                "operation_id": str(entry.operation_id),
+                "params_digest": entry.params_digest,
+            },
+        )
 
     async def settle(
         self, entry: JournalEntry, status: JournalStatus, error: BaseException
