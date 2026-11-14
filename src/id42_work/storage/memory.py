@@ -6,7 +6,9 @@ event loop and from several threads that each run their own loop. Nothing surviv
 process: no crash recovery, durability or distributed consistency is claimed.
 """
 
+import contextlib
 import threading
+from collections.abc import Generator
 from dataclasses import dataclass, field
 from uuid import UUID
 
@@ -29,35 +31,50 @@ class MemoryExecutionRepository:
         self._executions: dict[UUID, Execution] = {}
         self._journals: dict[UUID, dict[str, JournalEntry]] = {}
 
+    @contextlib.contextmanager
+    def hold(self) -> Generator[None]:
+        """Hold this repository's lock. Joint commits acquire executions, then events."""
+        with self._lock:
+            yield
+
+    def insert_new(self, execution: Execution) -> None:
+        """Store a revision-0 execution. Caller holds :meth:`hold`."""
+        eid = execution.execution_id
+        if eid in self._executions:
+            msg = f"execution {eid} already exists"
+            raise StorageError(msg, execution_id=eid)
+        if execution.revision != 0:
+            msg = "new executions must have revision 0"
+            raise StorageError(msg, execution_id=eid)
+        self._executions[eid] = execution
+        self._journals[eid] = {}
+
+    def replace(self, updated: Execution) -> None:
+        """Compare-and-set. Caller holds :meth:`hold`."""
+        eid = updated.execution_id
+        current = self._executions.get(eid)
+        if current is None:
+            msg = f"execution {eid} does not exist"
+            raise StorageError(msg, execution_id=eid)
+        if current.revision != updated.revision - 1:
+            msg = (
+                f"execution {eid} is at revision {current.revision}, "
+                f"update expects {updated.revision - 1}"
+            )
+            raise ConcurrentModificationError(msg, execution_id=eid)
+        self._executions[eid] = updated
+
     async def create(self, execution: Execution) -> None:
         with self._lock:
-            if execution.execution_id in self._executions:
-                msg = f"execution {execution.execution_id} already exists"
-                raise StorageError(msg, execution_id=execution.execution_id)
-            if execution.revision != 0:
-                msg = "new executions must have revision 0"
-                raise StorageError(msg, execution_id=execution.execution_id)
-            self._executions[execution.execution_id] = execution
-            self._journals[execution.execution_id] = {}
+            self.insert_new(execution)
 
     async def get(self, execution_id: UUID) -> Execution | None:
         with self._lock:
             return self._executions.get(execution_id)
 
     async def compare_and_set(self, updated: Execution) -> None:
-        eid = updated.execution_id
         with self._lock:
-            current = self._executions.get(eid)
-            if current is None:
-                msg = f"execution {eid} does not exist"
-                raise StorageError(msg, execution_id=eid)
-            if current.revision != updated.revision - 1:
-                msg = (
-                    f"execution {eid} is at revision {current.revision}, "
-                    f"update expects {updated.revision - 1}"
-                )
-                raise ConcurrentModificationError(msg, execution_id=eid)
-            self._executions[eid] = updated
+            self.replace(updated)
 
     async def append_journal(self, entry: JournalEntry) -> None:
         eid = entry.execution_id
@@ -145,14 +162,27 @@ class MemoryEventRepository:
         self._lock = threading.Lock()
         self._streams: dict[UUID | None, list[WorkEvent]] = {}
 
+    @contextlib.contextmanager
+    def hold(self) -> Generator[None]:
+        """Hold this repository's lock. Joint commits acquire executions, then events."""
+        with self._lock:
+            yield
+
+    def require_next(self, event: WorkEvent) -> None:
+        """Raise if ``event`` is not the next one in its stream. Caller holds :meth:`hold`."""
+        expected = len(self._streams.get(event.execution_id, ())) + 1
+        if event.sequence_number != expected:
+            msg = f"expected sequence {expected}, got {event.sequence_number}"
+            raise ConcurrentModificationError(msg, execution_id=event.execution_id)
+
+    def add(self, event: WorkEvent) -> None:
+        """Append ``event``. Caller holds :meth:`hold` and has called :meth:`require_next`."""
+        self._streams.setdefault(event.execution_id, []).append(event)
+
     async def append(self, event: WorkEvent) -> None:
         with self._lock:
-            stream = self._streams.setdefault(event.execution_id, [])
-            expected = len(stream) + 1
-            if event.sequence_number != expected:
-                msg = f"expected sequence {expected}, got {event.sequence_number}"
-                raise ConcurrentModificationError(msg, execution_id=event.execution_id)
-            stream.append(event)
+            self.require_next(event)
+            self.add(event)
 
     async def last_sequence(self, execution_id: UUID | None) -> int:
         with self._lock:
@@ -173,6 +203,12 @@ class MemoryIdempotencyRepository:
     async def reserve(self, record: IdempotencyRecord) -> IdempotencyRecord:
         with self._lock:
             return self._records.setdefault(record.scope, record)
+
+    async def release(self, scope: IdempotencyScope, *, execution_id: UUID) -> None:
+        with self._lock:
+            current = self._records.get(scope)
+            if current is not None and current.execution_id == execution_id:
+                del self._records[scope]
 
     async def get(self, scope: IdempotencyScope) -> IdempotencyRecord | None:
         with self._lock:
@@ -223,6 +259,25 @@ class MemoryInputStore:
 @dataclass(frozen=True, slots=True)
 class MemoryStorage:
     """All in-memory repositories, bundled for ``WorkRunner``."""
+
+    async def commit_execution(
+        self, updated: Execution, event: WorkEvent, *, create: bool = False
+    ) -> None:
+        """Store an execution and its event under both repository locks.
+
+        Lock order is executions then events, everywhere. The two writes happen
+        before either lock is released, so a conflict leaves both unchanged.
+        """
+        if event.execution_id != updated.execution_id:
+            msg = "event does not belong to the execution"
+            raise StorageError(msg, execution_id=updated.execution_id)
+        with self.executions.hold(), self.events.hold():
+            self.events.require_next(event)
+            if create:
+                self.executions.insert_new(updated)
+            else:
+                self.executions.replace(updated)
+            self.events.add(event)
 
     executions: MemoryExecutionRepository = field(default_factory=MemoryExecutionRepository)
     approvals: MemoryApprovalRepository = field(default_factory=MemoryApprovalRepository)
