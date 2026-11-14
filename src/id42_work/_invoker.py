@@ -147,8 +147,9 @@ class ActionInvoker:
                     NonDeterministicExecutionError(msg, execution_id=eid), "non_deterministic"
                 )
             raise ExecutionFailedError(msg, execution_id=eid)
-        if entry.status in {JournalStatus.IN_FLIGHT, JournalStatus.UNCERTAIN}:  # pragma: no cover
-            # Reachable only with persistent storage, after a crash during the call.
+        if entry.status is JournalStatus.IN_FLIGHT:
+            await self._rec.mark_action_uncertain(self._execution, entry)
+        if entry.status in {JournalStatus.IN_FLIGHT, JournalStatus.UNCERTAIN}:
             state.reconcile = True
             msg = f"action {entry.action_id!r} has an uncertain outcome; reconciliation required"
             raise state.fail(UncertainOutcomeError(msg, execution_id=eid), "uncertain_outcome")
