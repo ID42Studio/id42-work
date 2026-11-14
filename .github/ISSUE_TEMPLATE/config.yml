@@ -1,5 +1,5 @@
 blank_issues_enabled: false
 contact_links:
   - name: Report a security vulnerability
-    url: https://id42studio.github.io/
-    about: Do not open a public issue. Follow SECURITY.md (private report or contato@id42.studio).
+    url: https://github.com/ID42Studio/id42-work/blob/main/SECURITY.md
+    about: Do not open a public issue. Follow SECURITY.md (private report or talkid42studio@gmail.com).
