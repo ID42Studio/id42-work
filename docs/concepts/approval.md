@@ -51,4 +51,7 @@ call periodically.
 
 ## Persistence
 
-In 0.1.0, pending approvals live in memory and do not survive the process.
+With `MemoryStorage`, pending approvals live in the process and disappear when it
+exits. `SqliteStorage` keeps them, including the digest they are bound to. After a
+restart the same digest is still valid; a different digest invalidates it. See
+[Storage](../storage.md).

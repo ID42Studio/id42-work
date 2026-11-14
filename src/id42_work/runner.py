@@ -50,11 +50,12 @@ from id42_work.exceptions import (
     InputValidationError,
     PolicyDeniedError,
     StorageError,
+    UncertainOutcomeError,
     WorkDefinitionError,
 )
 from id42_work.execution import Execution
 from id42_work.identifiers import cancel_grant, resume_grant
-from id42_work.journal import JournalEntry
+from id42_work.journal import JournalEntry, JournalStatus
 from id42_work.outcomes.models import Outcome, Severity, ValidationResult
 from id42_work.outcomes.validators import validate_output_schema
 from id42_work.policy.engine import PolicyEngine
@@ -287,39 +288,37 @@ class WorkRunner:
         actor: object,
         constraints: Iterable[str] | None = None,
     ) -> Execution:
-        """Continue a ``READY`` execution after its approval was granted.
+        """Continue a ``READY`` execution, or recover a ``RUNNING`` one after a restart.
 
         The executor runs again from the start: journaled actions are replayed, not
         repeated, and an action whose parameters changed needs a new approval. The policy
         is evaluated again with the current policy and the resuming actor's grants.
 
+        A ``RUNNING`` execution means the previous process stopped while driving it.
+        Actions left ``IN_FLIGHT`` become ``UNCERTAIN`` and the execution ends ``FAILED``
+        with ``requires_reconciliation``; they are not retried. With no ``IN_FLIGHT``
+        action, the executor is replayed from the start. The per-process claim still
+        applies: a second call in this process does not drive the execution again.
+
         ``actor`` must be the execution's actor (same tenant) or hold
-        ``resume:<work_id>`` in the same tenant. Executions that are not ``READY``, or
-        that another call is already driving, are returned unchanged.
+        ``resume:<work_id>`` in the same tenant. Any other state is returned unchanged.
 
         Raises ``UntrustedActorError``, ``PolicyDeniedError`` (``resume_not_allowed``),
         ``ExecutionError`` (unknown execution), ``WorkDefinitionError`` (the definition
-        was replaced) or ``StorageError``.
+        was replaced) or ``StorageError``. A policy that denies a crashed ``RUNNING``
+        execution fails it (``policy_denied_on_resume``) because ``RUNNING`` cannot
+        move to ``DENIED``.
         """
         trusted = self._authority.verify(actor, now=self._rec.now())
         execution = await self._load(execution_id)
         _check_operator(trusted, execution, resume_grant(execution.work_id), "resume")
         await self._approvals.expire_for_execution(execution_id)
         execution = await self._load(execution_id)
+        if execution.status is S.RUNNING:
+            return await self._resume_interrupted(execution, trusted, constraints)
         if execution.status is not S.READY:
             return execution
-        binding = self._registry.get(execution.work_id, execution.work_version)
-        if binding.definition_digest != execution.definition_digest:
-            msg = (
-                f"work {binding.work.ref} was replaced after execution {execution_id} "
-                "started; it cannot be resumed"
-            )
-            raise WorkDefinitionError(msg, execution_id=execution_id)
-        validated = await self._rec.storage.inputs.get(execution.input_reference)
-        if validated is None:
-            msg = f"input of execution {execution_id} is not available"
-            raise StorageError(msg, execution_id=execution_id)
-
+        binding, validated = await self._open_for_resume(execution)
         with self._claim(execution_id) as claimed:
             if not claimed:
                 return execution
@@ -444,6 +443,89 @@ class WorkRunner:
 
     # ------------------------------------------------------------------ driving
 
+    async def _open_for_resume(self, execution: Execution) -> tuple[WorkBinding, BaseModel]:
+        """Resolve the original definition and the stored input."""
+        execution_id = execution.execution_id
+        binding = self._registry.get(execution.work_id, execution.work_version)
+        if binding.definition_digest != execution.definition_digest:
+            msg = (
+                f"work {binding.work.ref} was replaced after execution {execution_id} "
+                "started; it cannot be resumed"
+            )
+            raise WorkDefinitionError(msg, execution_id=execution_id)
+        validated = await self._rec.storage.inputs.get(execution.input_reference)
+        if validated is None:
+            msg = f"input of execution {execution_id} is not available"
+            raise StorageError(msg, execution_id=execution_id)
+        return binding, validated
+
+    async def _resume_interrupted(
+        self,
+        execution: Execution,
+        actor: TrustedActor,
+        constraints: Iterable[str] | None,
+    ) -> Execution:
+        """Recover a ``RUNNING`` execution whose driver is gone."""
+        binding, validated = await self._open_for_resume(execution)
+        with self._claim(execution.execution_id) as claimed:
+            if not claimed:
+                return execution
+            journal = await self._rec.storage.executions.list_journal(execution.execution_id)
+            in_flight = [entry for entry in journal if entry.status is JournalStatus.IN_FLIGHT]
+            if in_flight:
+                await self._rec.emit(
+                    execution,
+                    EventType.EXECUTION_RESUMED,
+                    {"resumed_by": actor.actor_id, "interrupted": True},
+                )
+                for entry in in_flight:
+                    await self._rec.mark_action_uncertain(execution, entry)
+                names = ", ".join(repr(entry.action_id) for entry in in_flight)
+                msg = f"actions {names} have an uncertain outcome; reconciliation required"
+                return await self._rec.fail(
+                    execution,
+                    UncertainOutcomeError(msg, execution_id=execution.execution_id),
+                    "uncertain_outcome",
+                    reconcile=True,
+                )
+            decision = self._engine.evaluate(
+                binding.work, actor, constraints=constraints, now=self._rec.now()
+            )
+            await self._rec.emit(
+                execution,
+                EventType.EXECUTION_RESUMED,
+                {
+                    "resumed_by": actor.actor_id,
+                    "allowed": decision.allowed,
+                    "interrupted": True,
+                },
+            )
+            if not decision.allowed:
+                msg = f"policy denied resuming execution {execution.execution_id}"
+                denied = execution.model_copy(
+                    update={
+                        "policy_reasons": decision.reasons,
+                        "granted_capabilities": frozenset[str](),
+                    }
+                )
+                return await self._rec.fail(
+                    denied,
+                    PolicyDeniedError(
+                        msg, execution_id=execution.execution_id, reasons=decision.reasons
+                    ),
+                    "policy_denied_on_resume",
+                    reconcile=False,
+                )
+            current = execution.model_copy(
+                update={
+                    "policy_id": decision.policy_id,
+                    "policy_version": decision.policy_version,
+                    "effective_autonomy": decision.effective_autonomy,
+                    "granted_capabilities": decision.granted_capabilities,
+                }
+            )
+            return await self._drive(current, binding, validated, decision, already_running=True)
+
     async def _drive(
         self,
         execution: Execution,
@@ -452,32 +534,39 @@ class WorkRunner:
         decision: PolicyDecision,
         *,
         first_changes: Mapping[str, object] | None = None,
+        already_running: bool = False,
     ) -> Execution:
-        """Run from ``READY`` to a terminal or waiting state."""
-        start_gate = decision.gate_for(ApprovalGate.START)
-        if start_gate is not None:
-            start_digest = self._rec.action_digest(
-                execution, ApprovalGate.START, START_ACTION_ID, None, validated
-            )
-            if not await self._rec.check_gate(
-                execution, start_gate, START_ACTION_ID, start_digest, validated
-            ):
-                return await self._rec.transition(
-                    execution,
-                    S.WAITING_APPROVAL,
-                    EventType.EXECUTION_SUSPENDED,
-                    {"gate": ApprovalGate.START.value},
-                    reason="awaiting_start_approval",
-                    extra_changes=first_changes,
-                )
+        """Run from ``READY`` to a terminal or waiting state.
 
-        execution = await self._rec.transition(
-            execution,
-            S.RUNNING,
-            EventType.EXECUTION_STARTED,
-            {},
-            extra_changes=first_changes,
-        )
+        ``already_running`` skips the start gate and the transition into ``RUNNING``.
+        The execution is already there because a previous process stopped after that
+        transition and left no ``IN_FLIGHT`` action.
+        """
+        if not already_running:
+            start_gate = decision.gate_for(ApprovalGate.START)
+            if start_gate is not None:
+                start_digest = self._rec.action_digest(
+                    execution, ApprovalGate.START, START_ACTION_ID, None, validated
+                )
+                if not await self._rec.check_gate(
+                    execution, start_gate, START_ACTION_ID, start_digest, validated
+                ):
+                    return await self._rec.transition(
+                        execution,
+                        S.WAITING_APPROVAL,
+                        EventType.EXECUTION_SUSPENDED,
+                        {"gate": ApprovalGate.START.value},
+                        reason="awaiting_start_approval",
+                        extra_changes=first_changes,
+                    )
+
+            execution = await self._rec.transition(
+                execution,
+                S.RUNNING,
+                EventType.EXECUTION_STARTED,
+                {},
+                extra_changes=first_changes,
+            )
         state = RunState()
         context = RunContext(
             execution_id=execution.execution_id,

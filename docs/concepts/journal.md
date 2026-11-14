@@ -27,8 +27,17 @@ When an execution waits for an approval, nothing stays suspended in memory. On
   different digest and requests a new one.
 
 This requires deterministic executors. In exchange, waiting holds no resources, and
-the same model will work with persistent storage, where a suspended coroutine cannot
+the same model works with persistent storage, where a suspended coroutine cannot
 survive a restart.
+
+With `SqliteStorage`, `resume` also recovers an execution left `RUNNING` because the
+process stopped:
+
+- `SUCCEEDED` actions are replayed and the provider is not called;
+- an action still `IN_FLIGHT` becomes `UNCERTAIN`, the execution ends `FAILED` with
+  `requires_reconciliation`, and the provider is not called again.
+
+See [Storage](../storage.md).
 
 ## Uncertain side effects
 

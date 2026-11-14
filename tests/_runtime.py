@@ -4,7 +4,7 @@ import threading
 from collections.abc import Callable, Iterable, Mapping
 from datetime import timedelta
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 
 from pydantic import BaseModel, JsonValue
 
@@ -28,6 +28,7 @@ from id42_work import (
     WorkRegistry,
     WorkRunner,
 )
+from id42_work.storage import Storage
 
 READ = "suppliers.read"
 VALIDATE = "invoices.validate"
@@ -146,6 +147,7 @@ class Env:
         validators: Iterable[Validator] = (),
         grants: Iterable[str] = (READ, VALIDATE, PREPARE),
         no_policy: bool = False,
+        storage: Storage | None = None,
     ) -> None:
         self.clock = FixedClock()
         self.authority = ActorAuthority("host-app", clock=self.clock)
@@ -160,7 +162,11 @@ class Env:
         self.registry = WorkRegistry()
         self.executor = executor or InvoiceExecutor()
         self.registry.register(self.work, executor=self.executor, validators=validators)
-        self.storage = MemoryStorage()
+        # The attribute stays typed as MemoryStorage so tests can reach that
+        # backend's repositories. A caller that passes another backend only uses
+        # the Storage protocol through it.
+        chosen = MemoryStorage() if storage is None else storage
+        self.storage = cast(MemoryStorage, chosen)
         policies = {} if no_policy else {(self.work.id, self.work.version): self.policy}
         self.runner = WorkRunner(
             registry=self.registry,

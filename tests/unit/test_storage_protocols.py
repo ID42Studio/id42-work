@@ -19,6 +19,7 @@ def test_storage_protocols_are_exported() -> None:
         "IdempotencyScope",
         "InputStore",
         "MemoryStorage",
+        "SqliteStorage",
         "Storage",
     }
 

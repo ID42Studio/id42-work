@@ -1,7 +1,8 @@
 """Storage protocols (specification 12.1).
 
-All methods are asynchronous so that persistent adapters (v0.2) can implement them
-without changing callers. Every state change is a single atomic operation:
+All methods are asynchronous so that persistent adapters can implement them without
+changing callers. ``MemoryStorage`` keeps state in one process. ``SqliteStorage``
+writes the same records to a file. Every state change is a single atomic operation:
 implementations must never use read-then-write.
 """
 

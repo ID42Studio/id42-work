@@ -7,6 +7,23 @@ the public API; breaking changes are listed explicitly.
 
 ## [Unreleased]
 
+### Added
+
+- `SqliteStorage` persists executions, journals, approvals, events, evidence, inputs
+  and idempotency reservations in one SQLite file. It uses the standard library only
+  and passes the storage contract. The schema is versioned and migrated on open.
+- `resume` recovers a `RUNNING` execution after the process stops. Completed actions
+  are replayed. An action left `IN_FLIGHT` becomes `UNCERTAIN`, and the execution
+  ends `FAILED` with `requires_reconciliation`, without calling the provider again.
+- `examples/sqlite_resume.py` reopens a database, keeps an approval bound to its
+  digest, and resumes.
+
+### Documentation
+
+- `docs/storage.md` describes the backends, configuration, migrations and limits.
+  Architecture deviations D42 and D43 record the SQLite adapter and crash recovery.
+  PostgreSQL and execution leases stay on the roadmap.
+
 ## [0.1.0rc2] - 2026-11-14
 
 ### Fixed

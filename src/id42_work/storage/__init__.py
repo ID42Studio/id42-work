@@ -1,4 +1,4 @@
-"""Storage protocols and the in-memory implementation."""
+"""Storage protocols, the in-memory implementation and the SQLite backend."""
 
 from id42_work.storage.memory import MemoryStorage
 from id42_work.storage.protocols import (
@@ -12,6 +12,7 @@ from id42_work.storage.protocols import (
     InputStore,
     Storage,
 )
+from id42_work.storage.sqlite import SqliteStorage
 
 __all__ = [
     "ApprovalRepository",
@@ -23,5 +24,6 @@ __all__ = [
     "IdempotencyScope",
     "InputStore",
     "MemoryStorage",
+    "SqliteStorage",
     "Storage",
 ]
