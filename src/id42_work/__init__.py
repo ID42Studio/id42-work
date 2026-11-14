@@ -61,7 +61,7 @@ from id42_work.policy.registry import CapabilityRegistry
 from id42_work.registry import WorkBinding, WorkRegistry
 from id42_work.runner import WorkRunner
 from id42_work.states import TRANSITIONS, ExecutionStatus
-from id42_work.storage import MemoryStorage
+from id42_work.storage import MemoryStorage, SqliteStorage
 
 # A library must not emit log records unless the application configures logging.
 logging.getLogger("id42_work").addHandler(logging.NullHandler())
@@ -119,6 +119,7 @@ __all__ = [
     "PolicyError",
     "PolicyResolver",
     "Severity",
+    "SqliteStorage",
     "StaticPolicyResolver",
     "StorageError",
     "TrustedActor",
