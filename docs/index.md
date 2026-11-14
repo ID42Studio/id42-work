@@ -18,8 +18,10 @@ enforces it at run time:
 Core principle: **autonomy is a permission, not a capability.**
 
 !!! warning "Release candidate"
-    Version 0.1.0 is a pre-alpha release candidate with in-memory storage only. Read
-    [Security](security.md) before using it near real systems.
+    Version 0.1.0 is a pre-alpha release candidate. `MemoryStorage` is in-memory.
+    `SqliteStorage` persists to a file and can resume after a restart. There are no
+    cross-process leases yet. Read [Security](security.md) and [Storage](storage.md)
+    before using it near real systems.
 
 ## Where to go next
 
@@ -27,6 +29,7 @@ Core principle: **autonomy is a permission, not a capability.**
 - Concepts: [Work](concepts/work.md), [Policy](concepts/policy.md),
   [Execution](concepts/execution.md), [Approval](concepts/approval.md),
   [Outcome](concepts/outcome.md), [Journal and replay](concepts/journal.md).
+- [Storage](storage.md): memory or SQLite, migrations, crash recovery.
 - [Architecture](architecture.md): module map, runtime order, deviations from the
   specification.
 - [Security](security.md): threat model, guarantees and limitations.

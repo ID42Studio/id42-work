@@ -17,6 +17,7 @@ def test_all_specified_examples_exist() -> None:
         "hello_work.py",
         "human_approval.py",
         "invoice_validation.py",
+        "sqlite_resume.py",
     ]
 
 
