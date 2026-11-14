@@ -49,6 +49,11 @@ of a denial is fixed.
 The scope does not include the actor. Another actor in the same tenant who is allowed
 to run the work and submits the same key and input receives the existing execution.
 
+If the call fails before the execution record exists, its reservation is released and
+the same key can be retried. A reservation is never taken from another caller: if the
+process stops between the reservation and the record, a later call waits, then raises
+`StorageError`.
+
 ## Failures
 
 `execution.error` records the error type, its message, the cause chain and
