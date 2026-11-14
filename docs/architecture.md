@@ -107,6 +107,8 @@ inconsistent record:
 
 | D38 | 12, 14: optional OpenTelemetry integration (`id42-work[otel]`) | Not in 0.1.0. Structured events and `EventDispatcher` subscribers are the extension point; the `otel` extra was removed so that it promises nothing. | Deferred to v0.3 (roadmap) to keep the release candidate honest. |
 | D39 | 3.2: `timeout` bounds the executor run; 9: a raising validator is a failed check | `timeout` also bounds the validation phase (a separate budget, from its start). A validator still running at the deadline fails its check. A raising validator's result names only the exception type; the exception is logged. | Without a bound, one hanging validator left the execution in `VALIDATING` forever. Exception text may quote input or output values. |
+| D40 | 12.1: `IdempotencyRepository` is `reserve, get` | Added `release(scope, execution_id)`. It drops the reservation only when that execution still owns it. | A call that fails before the execution exists must not pin the key. A waiter never releases a reservation it does not own. An input stored for the failed attempt is left behind; nothing references it. |
+| D41 | 12.2: an execution update and an event append are separate atomic operations | `Storage.commit_execution` stores the execution and appends its event, both or neither. `last_event_sequence` is the sequence that was appended. A sequence race retries; a lost revision does not. | Reading the sequence, then writing the execution, then appending the event could record a sequence the event did not get. |
 
 The M3 note on expiry is resolved: an expired PENDING approval cancels its execution
 (reason `approval_expired`), as specification 7.5 requires. An expired GRANTED approval
@@ -148,9 +150,11 @@ Default gates use the reviewer grant `approve:<work_id>` and a 24-hour TTL.
    re-validated from their data). Fingerprint it.
 2. Evaluate the policy. Enforce the idempotency-key requirement. Reserve the scope.
    For an existing scope, return the existing execution (or raise
-   `IdempotencyConflictError`).
-3. Store the input. Create the execution (`CREATED`). Record `INPUT_REFERENCE`
-   evidence. Move to `POLICY_CHECK`, then `DENIED` or `READY`.
+   `IdempotencyConflictError`). If this call fails before the execution exists, it
+   releases the reservation it owns (D40).
+3. Store the input. Create the execution (`CREATED`) together with its creation
+   event. Record `INPUT_REFERENCE` evidence. Move to `POLICY_CHECK`, then `DENIED`
+   or `READY`.
 4. START gate: consume a matching granted approval, or request one and move to
    `WAITING_APPROVAL`.
 5. `RUNNING`: execute under `asyncio.timeout`. Every `context.invoke` goes through
@@ -177,8 +181,9 @@ Default gates use the reviewer grant `approve:<work_id>` and a 24-hour TTL.
    written. The run ends `VALIDATION_FAILED`, `WAITING_REVIEW` (OUTCOME gate) or
    `COMPLETED`.
 
-Every transition is persisted with compare-and-set, then exactly one event is
-appended (gapless per execution), then subscribers are notified.
+Every transition is persisted together with its event (`commit_execution`, D41),
+then subscribers are notified. The stream stays gapless. Other events, such as
+action and approval events, are appended on their own.
 
 Interrupted side effects: cancellation or timeout during a side-effecting provider
 call marks the action `UNCERTAIN` and the execution `requires_reconciliation`. The SDK
