@@ -24,6 +24,20 @@ from id42_work.storage.codec import (
 from id42_work.storage.protocols import IdempotencyRecord, IdempotencyScope
 
 
+def _edit(path: Path, sql: str, params: tuple[object, ...] = ()) -> None:
+    """Change rows with the stdlib driver, then close the connection.
+
+    The connection's context manager commits the transaction and, since Python 3.12,
+    leaves the connection open. An unclosed connection warns on 3.13.
+    """
+    connection = sqlite3.connect(path)
+    try:
+        with connection:
+            connection.execute(sql, params)
+    finally:
+        connection.close()
+
+
 class Greeting(BaseModel):
     name: str
 
@@ -72,8 +86,7 @@ async def test_closed_storage_refuses_callers(tmp_path: Path) -> None:
 async def test_newer_schema_is_refused(tmp_path: Path) -> None:
     path = tmp_path / "work.sqlite"
     SqliteStorage(path).close()
-    with sqlite3.connect(path) as conn:
-        conn.execute("UPDATE schema_migrations SET version = 9")
+    _edit(path, "UPDATE schema_migrations SET version = 9")
     with pytest.raises(StorageError, match="newer"):
         SqliteStorage(path)
 
@@ -129,8 +142,7 @@ async def test_corrupt_rows_raise_storage_error(tmp_path: Path) -> None:
     reference = await storage.inputs.put(execution.execution_id, Greeting(name="ada"))
     storage.close()
 
-    with sqlite3.connect(path) as conn:
-        conn.execute("UPDATE executions SET body = ?", ("{",))
+    _edit(path, "UPDATE executions SET body = ?", ("{",))
     broken = SqliteStorage(path)
     try:
         with pytest.raises(StorageError, match="not valid JSON"):
@@ -138,8 +150,7 @@ async def test_corrupt_rows_raise_storage_error(tmp_path: Path) -> None:
     finally:
         broken.close()
 
-    with sqlite3.connect(path) as conn:
-        conn.execute("UPDATE executions SET body = ?", ("[]",))
+    _edit(path, "UPDATE executions SET body = ?", ("[]",))
     broken = SqliteStorage(path)
     try:
         with pytest.raises(StorageError, match="not a JSON object"):
@@ -147,8 +158,7 @@ async def test_corrupt_rows_raise_storage_error(tmp_path: Path) -> None:
     finally:
         broken.close()
 
-    with sqlite3.connect(path) as conn:
-        conn.execute("UPDATE executions SET body = ?", ("{}",))
+    _edit(path, "UPDATE executions SET body = ?", ("{}",))
     broken = SqliteStorage(path)
     try:
         with pytest.raises(StorageError, match="invalid"):
@@ -156,11 +166,7 @@ async def test_corrupt_rows_raise_storage_error(tmp_path: Path) -> None:
     finally:
         broken.close()
 
-    with sqlite3.connect(path) as conn:
-        conn.execute(
-            "UPDATE inputs SET body = ?, model_ref = ?",
-            ("{", "missing.module:Gone"),
-        )
+    _edit(path, "UPDATE inputs SET body = ?, model_ref = ?", ("{", "missing.module:Gone"))
     broken = SqliteStorage(path)
     try:
         with pytest.raises(StorageError, match="cannot import"):
