@@ -7,6 +7,8 @@ the public API; breaking changes are listed explicitly.
 
 ## [Unreleased]
 
+## [0.1.0rc2] - 2026-11-14
+
 ### Fixed
 
 - An idempotency key reserved by a call that fails before the execution exists is
@@ -21,10 +23,19 @@ the public API; breaking changes are listed explicitly.
   `ValidationResult`, which could expose input or output values. The message names the
   exception type, and the exception is logged instead.
 
+### Changed
+
+- Vulnerability and conduct reports go to talkid42studio@gmail.com.
+- Project links point at the GitHub repository. The documentation link is the
+  `docs/` tree until the MkDocs site is published.
+- A version tag such as `v0.1.0rc2` publishes to PyPI with trusted publishing. A
+  manual workflow run publishes only to TestPyPI and stores no token.
+
 ### Documentation
 
 - Idempotency: a key reused after a denial returns the same `DENIED` execution, and
   the scope is shared by every actor of a tenant.
+- `docs/releasing.md` describes how to configure the trusted publishers and publish.
 
 ## [0.1.0rc1] - 2026-11-07
 

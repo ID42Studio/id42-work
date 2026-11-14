@@ -4,7 +4,7 @@ This document describes how the implementation maps to the engineering specifica
 (`SPEC.md` at the repository root, v0.1.1) and records every deviation or refinement, as the
 specification requires (section 5 and 26).
 
-## Module map (0.1.0rc1)
+## Module map (0.1.0rc2)
 
 | Module | Contents |
 |---|---|

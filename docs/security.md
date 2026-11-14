@@ -103,7 +103,7 @@ durability and no distributed consistency in 0.1.0.
 An LLM-based validator is possible as custom code. Do not make it the only required
 validator for high-risk work.
 
-## Review for 0.1.0rc1
+## Review for 0.1.0rc2
 
 An internal review by the maintainers, not an external audit. Checked:
 
