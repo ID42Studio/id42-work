@@ -1,5 +1,10 @@
 site_name: ID42 Work SDK
 site_description: Define work. Govern execution. Verify outcomes.
+# The site is not published yet. These point at the repository until then.
+site_url: https://github.com/ID42Studio/id42-work/tree/main/docs
+repo_url: https://github.com/ID42Studio/id42-work
+repo_name: ID42Studio/id42-work
+edit_uri: edit/main/docs/
 strict: true
 
 theme:
@@ -28,3 +33,4 @@ nav:
   - Architecture: architecture.md
   - Security: security.md
   - Roadmap: roadmap.md
+  - Releasing: releasing.md

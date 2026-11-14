@@ -4,13 +4,14 @@ build-backend = "hatchling.build"
 
 [project]
 name = "id42-work"
-version = "0.1.0rc1"
+version = "0.1.0rc2"
 description = "Define work. Govern execution. Verify outcomes. A lightweight SDK for governed execution of work by software systems and AI agents."
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 requires-python = ">=3.11"
-authors = [{ name = "ID42 Studio", email = "contato@id42.studio" }]
+authors = [{ name = "ID42 Studio", email = "talkid42studio@gmail.com" }]
+maintainers = [{ name = "ID42 Studio", email = "talkid42studio@gmail.com" }]
 keywords = ["ai-agents", "governance", "human-in-the-loop", "approval", "idempotency", "workflow"]
 classifiers = [
     "Development Status :: 2 - Pre-Alpha",
@@ -27,8 +28,11 @@ classifiers = [
 dependencies = ["pydantic>=2.7,<3"]
 
 [project.urls]
-Homepage = "https://id42studio.github.io/"
-Documentation = "https://id42studio.github.io/"
+Homepage = "https://github.com/ID42Studio/id42-work"
+Repository = "https://github.com/ID42Studio/id42-work"
+Documentation = "https://github.com/ID42Studio/id42-work/tree/main/docs"
+Changelog = "https://github.com/ID42Studio/id42-work/blob/main/CHANGELOG.md"
+Issues = "https://github.com/ID42Studio/id42-work/issues"
 
 [dependency-groups]
 dev = [

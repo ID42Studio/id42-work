@@ -258,4 +258,4 @@ uv run python examples/hello_work.py
 
 ## License
 
-[Apache-2.0](LICENSE). Maintained by [ID42 Studio](https://id42studio.github.io/).
+[Apache-2.0](LICENSE). Maintained by [ID42 Studio](https://github.com/ID42Studio/id42-work).

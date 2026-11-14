@@ -38,6 +38,9 @@ that way with meaningful tests, not just line coverage.
 The project follows Semantic Versioning. During `0.x`, minor versions may break the
 public API; breaking changes are listed in the changelog.
 
+How to configure trusted publishing and cut a release is in
+[docs/releasing.md](docs/releasing.md).
+
 ## Code of conduct
 
 Participation is governed by [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).

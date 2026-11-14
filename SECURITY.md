@@ -12,7 +12,7 @@ Do **not** open a public issue for security problems.
 
 - Prefer the repository's private vulnerability reporting (GitHub, "Security" tab),
   when available.
-- Otherwise, email **contato@id42.studio** with the subject `SECURITY: id42-work`.
+- Otherwise, email **talkid42studio@gmail.com** with the subject `SECURITY: id42-work`.
 
 Include the affected version, a description, steps to reproduce and the impact you
 expect. We aim to acknowledge reports within five business days and will keep you

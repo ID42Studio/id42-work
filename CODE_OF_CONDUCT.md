@@ -27,7 +27,7 @@ and when someone represents the project elsewhere.
 
 ## Enforcement
 
-Report problems to the maintainers at contato@id42.studio. Reports are handled
+Report problems to the maintainers at talkid42studio@gmail.com. Reports are handled
 confidentially. Maintainers may remove comments, commits or contributions that break
 this code, and may temporarily or permanently ban participants, in proportion to the
 behaviour.
