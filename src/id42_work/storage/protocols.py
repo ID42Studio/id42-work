@@ -114,6 +114,14 @@ class IdempotencyRepository(Protocol):
         """
         ...
 
+    async def release(self, scope: IdempotencyScope, *, execution_id: UUID) -> None:
+        """Drop the reservation if it still belongs to ``execution_id``.
+
+        A reservation owned by another execution is left in place. Releasing a scope
+        that is already free does nothing.
+        """
+        ...
+
     async def get(self, scope: IdempotencyScope) -> IdempotencyRecord | None: ...
 
 
@@ -137,6 +145,19 @@ class InputStore(Protocol):
 
 class Storage(Protocol):
     """The set of repositories a runner needs."""
+
+    async def commit_execution(
+        self, updated: Execution, event: WorkEvent, *, create: bool = False
+    ) -> None:
+        """Store ``updated`` and append ``event``, both or neither.
+
+        When ``create`` is true, ``updated`` is a new revision-0 execution. Otherwise
+        it replaces the stored record only if the stored revision is
+        ``updated.revision - 1``. The event is appended only if its sequence is the
+        stream's next one. A conflict raises ``ConcurrentModificationError`` and leaves
+        both the execution and the stream unchanged.
+        """
+        ...
 
     @property
     def executions(self) -> ExecutionRepository: ...
