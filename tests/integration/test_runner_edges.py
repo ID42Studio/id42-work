@@ -53,7 +53,65 @@ async def test_event_append_gives_up_after_repeated_conflicts() -> None:
         raise ConcurrentModificationError("simulated race")
 
     env.storage.events.append = always_conflicts  # type: ignore[method-assign]
-    with pytest.raises(StorageError, match="could not append"):
+    execution = await env.run()
+    assert execution.status is S.FAILED
+    assert execution.status_reason == "executor_error"
+    assert execution.error is not None
+    assert "could not append" in execution.error.message
+
+
+async def test_a_raced_transition_keeps_the_event_sequence_it_committed() -> None:
+    env = Env()
+    original = env.storage.events.require_next
+    raced = {"done": False}
+
+    def steal_one_sequence(event: WorkEvent) -> None:
+        if not raced["done"] and event.event_type is EventType.EXECUTION_COMPLETED:
+            raced["done"] = True
+            env.storage.events.add(
+                event.model_copy(update={"event_type": EventType.ACTION_FAILED, "payload": {}})
+            )
+        original(event)
+
+    env.storage.events.require_next = steal_one_sequence  # type: ignore[method-assign]
+    execution = await env.run()
+    events = await env.runner.events(execution.execution_id)
+    assert events[-2].event_type is EventType.ACTION_FAILED
+    assert events[-1].event_type is EventType.EXECUTION_COMPLETED
+    assert execution.last_event_sequence == events[-1].sequence_number
+
+
+async def test_a_commit_conflict_on_a_missing_execution_is_not_retried() -> None:
+    env = Env()
+    original_require = env.storage.events.require_next
+    original_get = env.storage.executions.get
+    conflicted = {"done": False}
+
+    def conflict_once(event: WorkEvent) -> None:
+        if event.event_type is not EventType.EXECUTION_CREATED and not conflicted["done"]:
+            conflicted["done"] = True
+            raise ConcurrentModificationError("race")
+        original_require(event)
+
+    async def disappear(execution_id: Any) -> Any:
+        if conflicted["done"]:
+            return None
+        return await original_get(execution_id)
+
+    env.storage.events.require_next = conflict_once  # type: ignore[method-assign]
+    env.storage.executions.get = disappear  # type: ignore[method-assign]
+    with pytest.raises(ConcurrentModificationError, match="race"):
+        await env.run()
+
+
+async def test_commit_gives_up_after_repeated_sequence_races() -> None:
+    env = Env()
+
+    def always_conflicts(event: WorkEvent) -> None:
+        raise ConcurrentModificationError("sequence raced")
+
+    env.storage.events.require_next = always_conflicts  # type: ignore[method-assign]
+    with pytest.raises(StorageError, match=r"could not commit work\.execution\.created"):
         await env.run()
 
 

@@ -67,14 +67,24 @@ async def test_expiry_tolerates_an_execution_that_moved_on() -> None:
     env = _env(AutonomyLevel.MANUAL)
     execution = await env.run()
     env.clock.now += timedelta(hours=25)
-    original = env.storage.executions.compare_and_set
+    original = env.storage.executions.replace
+    original_get = env.storage.executions.get
+    conflicted = {"done": False}
 
-    async def conflict(updated: Execution) -> None:
+    def conflict(updated: Execution) -> None:
         if updated.status is S.CANCELLED:
+            conflicted["done"] = True
             raise ConcurrentModificationError("execution changed meanwhile")
-        await original(updated)
+        original(updated)
 
-    env.storage.executions.compare_and_set = conflict  # type: ignore[method-assign]
+    async def newer(execution_id: Any) -> Execution | None:
+        current = await original_get(execution_id)
+        if conflicted["done"] and current is not None:
+            return current.model_copy(update={"revision": current.revision + 1})
+        return current
+
+    env.storage.executions.replace = conflict  # type: ignore[method-assign]
+    env.storage.executions.get = newer  # type: ignore[method-assign]
     assert await env.runner.expire_due() == 1
     current = await env.runner.get(execution.execution_id)
     assert current is not None

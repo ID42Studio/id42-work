@@ -5,7 +5,7 @@ exactly one event), events, evidence, journal settlement and approval gates.
 """
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime
 from typing import cast
 from uuid import UUID, uuid4
@@ -168,6 +168,18 @@ class ExecutionRecorder:
     def now(self) -> datetime:
         return to_utc(self._clock())
 
+    async def create_execution(
+        self, execution: Execution, payload: dict[str, JsonValue]
+    ) -> Execution:
+        """Persist a new execution together with its creation event."""
+
+        async def revise(sequence: int) -> Execution:
+            return execution.model_copy(update={"last_event_sequence": sequence})
+
+        return await self._commit_with_event(
+            execution, EventType.EXECUTION_CREATED, payload, revise, create=True
+        )
+
     async def transition(
         self,
         execution: Execution,
@@ -179,27 +191,73 @@ class ExecutionRecorder:
         extra_changes: Mapping[str, object] | None = None,
         **changes: object,
     ) -> Execution:
-        """Persist ``execution -> to_status`` (compare-and-set) and emit one event."""
+        """Persist ``execution -> to_status`` and its event as one commit."""
         eid = execution.execution_id
         changes = {**(extra_changes or {}), **changes}
-        evidence_ids = tuple(e.evidence_id for e in await self.storage.evidence.list(eid))
-        sequence = await self.storage.events.last_sequence(eid) + 1
-        updated = transition_execution(
-            execution,
-            to_status,
-            at=max(self.now(), execution.updated_at),
-            reason=reason,
-            evidence_ids=evidence_ids,
-            last_event_sequence=sequence,
-            **changes,
+        event_payload = {
+            "from": execution.status.value,
+            "to": to_status.value,
+            "reason": reason,
+            **payload,
+        }
+
+        async def revise(sequence: int) -> Execution:
+            evidence_ids = tuple(e.evidence_id for e in await self.storage.evidence.list(eid))
+            return transition_execution(
+                execution,
+                to_status,
+                at=max(self.now(), execution.updated_at),
+                reason=reason,
+                evidence_ids=evidence_ids,
+                last_event_sequence=sequence,
+                **changes,
+            )
+
+        return await self._commit_with_event(
+            execution, event_type, event_payload, revise, create=False
         )
-        await self.storage.executions.compare_and_set(updated)
-        await self.emit(
-            updated,
-            event_type,
-            {"from": execution.status.value, "to": to_status.value, "reason": reason, **payload},
-        )
-        return updated
+
+    async def _commit_with_event(
+        self,
+        execution: Execution,
+        event_type: EventType,
+        payload: dict[str, JsonValue],
+        revise: Callable[[int], Awaitable[Execution]],
+        *,
+        create: bool,
+    ) -> Execution:
+        """Commit ``revise(sequence)`` with the event of that sequence, or neither.
+
+        A sequence race retries. A lost execution revision does not: the caller's
+        record is stale. Non-transition events still go through :meth:`emit`.
+        """
+        eid = execution.execution_id
+        redacted = self._redactor(payload)
+        last_conflict: ConcurrentModificationError | None = None
+        for _ in range(_EVENT_APPEND_ATTEMPTS):
+            sequence = await self.storage.events.last_sequence(eid) + 1
+            stored = await revise(sequence)
+            event = WorkEvent(
+                event_type=event_type,
+                execution_id=eid,
+                sequence_number=sequence,
+                timestamp=stored.updated_at,
+                actor_reference=execution.actor_id,
+                payload=redacted,
+            )
+            try:
+                await self.storage.commit_execution(stored, event, create=create)
+            except ConcurrentModificationError as error:
+                last_conflict = error
+                if not create:
+                    current = await self.storage.executions.get(eid)
+                    if current is None or current.revision != execution.revision:
+                        raise
+                continue
+            self.dispatcher.publish(event)
+            return stored
+        msg = f"could not commit {event_type.value} after {_EVENT_APPEND_ATTEMPTS} attempts"
+        raise StorageError(msg, execution_id=eid) from last_conflict
 
     async def fail(
         self,

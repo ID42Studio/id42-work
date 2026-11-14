@@ -148,39 +148,43 @@ class WorkRunner:
             raise InputValidationError(msg)
 
         execution_id = uuid4()
+        reserved_scope: IdempotencyScope | None = None
         if scope is not None:
             existing = await self._reserve(scope, fingerprint, execution_id)
             if existing is not None:
                 return existing
+            reserved_scope = scope
 
-        input_reference = await self._rec.storage.inputs.put(execution_id, validated)
-        now = self._rec.now()
-        execution = Execution(
-            execution_id=execution_id,
-            work_id=work.id,
-            work_version=work.version,
-            definition_digest=binding.definition_digest,
-            actor_id=trusted.actor_id,
-            tenant_id=trusted.tenant_id,
-            input_fingerprint=fingerprint,
-            input_reference=input_reference,
-            idempotency_key=idempotency_key,
-            created_at=now,
-            updated_at=now,
-            last_event_sequence=1,
-        )
-        await self._rec.storage.executions.create(execution)
-        await self._rec.emit(
-            execution,
-            EventType.EXECUTION_CREATED,
-            {
-                "work_id": work.id,
-                "work_version": work.version,
-                "definition_digest": binding.definition_digest,
-                "input_fingerprint": fingerprint,
-                "idempotent": scope is not None,
-            },
-        )
+        try:
+            input_reference = await self._rec.storage.inputs.put(execution_id, validated)
+            now = self._rec.now()
+            execution = Execution(
+                execution_id=execution_id,
+                work_id=work.id,
+                work_version=work.version,
+                definition_digest=binding.definition_digest,
+                actor_id=trusted.actor_id,
+                tenant_id=trusted.tenant_id,
+                input_fingerprint=fingerprint,
+                input_reference=input_reference,
+                idempotency_key=idempotency_key,
+                created_at=now,
+                updated_at=now,
+            )
+            execution = await self._rec.create_execution(
+                execution,
+                {
+                    "work_id": work.id,
+                    "work_version": work.version,
+                    "definition_digest": binding.definition_digest,
+                    "input_fingerprint": fingerprint,
+                    "idempotent": scope is not None,
+                },
+            )
+        except BaseException:
+            if reserved_scope is not None:
+                await _release_reservation(self._rec.storage, reserved_scope, execution_id)
+            raise
         await self._rec.add_evidence(
             execution_id,
             EvidenceType.INPUT_REFERENCE,
@@ -687,6 +691,20 @@ class WorkRunner:
 
 
 # ---------------------------------------------------------------------- helpers
+
+
+async def _release_reservation(
+    storage: Storage, scope: IdempotencyScope, execution_id: UUID
+) -> None:
+    """Drop a reservation whose execution was never stored. Keep the original error."""
+    try:
+        await storage.idempotency.release(scope, execution_id=execution_id)
+    except Exception:
+        _logger.warning(
+            "could not release idempotency reservation",
+            extra={"execution.id": str(execution_id)},
+            exc_info=True,
+        )
 
 
 def _check_operator(actor: TrustedActor, execution: Execution, grant: str, operation: str) -> None:
