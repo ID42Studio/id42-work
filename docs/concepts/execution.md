@@ -66,6 +66,7 @@ process stops between the reservation and the record, a later call waits, then r
 - `invalid_action_id`, `duplicate_action_id`, `invalid_action_params`
 - `non_deterministic`
 - `uncertain_outcome`
+- `policy_denied_on_resume`
 - `invalid_capability_result`
 - `cancelled_in_flight`
 

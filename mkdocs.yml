@@ -30,6 +30,7 @@ nav:
       - Approval: concepts/approval.md
       - Outcome and evidence: concepts/outcome.md
       - Journal and replay: concepts/journal.md
+  - Storage: storage.md
   - Architecture: architecture.md
   - Security: security.md
   - Roadmap: roadmap.md

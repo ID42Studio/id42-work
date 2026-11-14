@@ -23,10 +23,12 @@ uv run python examples/invoice_validation.py  # denials, validation failures, id
 uv run python examples/human_approval.py      # approvals, rejection, changed parameters
 uv run python examples/async_execution.py     # concurrency and the sync API
 uv run python examples/fake_odoo_invoice.py   # gated ERP posting, uncertain outcomes
+uv run python examples/sqlite_resume.py       # the same approval, reopened from SQLite
 ```
 
-Each example checks its own expectations and prints `OK`. All of them use synthetic
-data and an in-memory fake of an Odoo adapter: no credentials are needed.
+Each example checks its own expectations and prints `OK`. They use synthetic data:
+no credentials are needed. `sqlite_resume.py` writes a temporary SQLite file. See
+[Storage](storage.md) to choose a backend.
 
 ## The five pieces you wire
 
@@ -50,7 +52,7 @@ runner = WorkRunner(
     policies=resolver,
     capabilities=capabilities,
     actor_authority=authority,
-    storage=MemoryStorage(),
+    storage=MemoryStorage(),  # or SqliteStorage("work.sqlite")
 )
 execution = await runner.run(
     work_id="greet", version="1.0.0", input_data={"name": "ada"}, actor=actor

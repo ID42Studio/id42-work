@@ -219,7 +219,7 @@ host app ──► WorkRunner.run ──► PolicyEngine (deny by default, no LL
          state machine ──► ExecutionContext.invoke ──► CapabilityProvider ──► ERP / APIs
                  │               (grant, gate, journal, replay)
                  ▼
-          validators ──► Outcome ──► evidence + events ──► Storage (in-memory in 0.1)
+          validators ──► Outcome ──► evidence + events ──► MemoryStorage or SqliteStorage
 ```
 
 Details, module map and every deviation from the specification are in
@@ -229,7 +229,9 @@ Details, module map and every deviation from the specification are in
 ## Project maturity
 
 - Version 0.1.0 release candidate, licensed Apache-2.0, maintained by ID42 Studio.
-- In-memory storage only: no durability, no crash recovery, one process.
+- `MemoryStorage` is in-memory. `SqliteStorage` persists to a file and resumes after
+  a restart. The resume claim is still per process; there is no PostgreSQL backend
+  yet. See `docs/storage.md`.
 - Capability enforcement covers calls made through the SDK. It cannot stop arbitrary
   Python code in the same process from calling external systems directly.
 - The SDK cannot guarantee exactly-once external side effects. Uncertain results are
@@ -239,8 +241,9 @@ Details, module map and every deviation from the specification are in
 
 ## Roadmap
 
-No dates are committed. The next steps are persistent storage, framework adapters
-(LangGraph, PydanticAI), an Odoo 18 connector package, and workflow composition. See
+No dates are committed. SQLite storage and crash recovery are in the tree. Still
+open: PostgreSQL, execution leases, framework adapters (LangGraph, PydanticAI), an
+Odoo 18 connector package, and workflow composition. See
 [docs/roadmap.md](docs/roadmap.md).
 
 ## Contributing

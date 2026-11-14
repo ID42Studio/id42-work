@@ -5,10 +5,19 @@ is a direction, not a promise.
 
 ## v0.2: persistent execution
 
-- PostgreSQL storage that passes `id42_work.testing.contract.StorageContractSuite`.
-- Durable approvals, journals and event history.
+Done in the first slice (SQLite, no new required dependency):
+
+- `SqliteStorage` passes `id42_work.testing.contract.StorageContractSuite`.
+- Approvals, journals, events, evidence, inputs and idempotency reservations survive
+  the process.
+- Crash recovery through replay. `resume` of a `RUNNING` execution left by a dead
+  process replays `SUCCEEDED` actions. Actions left `IN_FLIGHT` become `UNCERTAIN`
+  and the execution ends `FAILED` with `requires_reconciliation`.
+
+Still open:
+
+- PostgreSQL storage, same contract, as an optional extra.
 - Execution leases, replacing the per-process resume claim.
-- Crash recovery through replay. Actions left `IN_FLIGHT` become `UNCERTAIN`.
 - Reconciliation tooling for uncertain side effects.
 - Registry-level events (`work.definition.registered` / `replaced`).
 
