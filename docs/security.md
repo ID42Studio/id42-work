@@ -81,10 +81,15 @@ Treat at-least-once delivery and uncertain outcomes as normal cases in integrati
 given their input and the results of `context.invoke`. A non-deterministic completed
 action is detected and fails the execution.
 
-**In-memory persistence.** `MemoryStorage` is scoped to one process. Executions,
-approvals, journals and events disappear when the process exits. The claim that
-prevents two concurrent resumes is per process. There is no crash recovery, no
-durability and no distributed consistency in 0.1.0.
+**Persistence.** `MemoryStorage` is scoped to one process. Executions, approvals,
+journals and events disappear when that process exits.
+
+`SqliteStorage` writes the same records to a file. After a restart, `resume`
+replays completed actions and marks an `IN_FLIGHT` action `UNCERTAIN` instead of
+calling the provider again. The claim that prevents two concurrent resumes is still
+per process: two live processes can both drive one execution. There are no
+cross-process leases and no distributed consistency. The database file is trusted
+host storage. Actor seals are not in it; the host issues new actors after a restart.
 
 **What the records may contain.**
 
@@ -124,7 +129,9 @@ An internal review by the maintainers, not an external audit. Checked:
 - Concurrency: duplicate requests from 25 tasks and 8 threads produce one execution
   and one side effect. Concurrent approval decisions have one winner.
 - Source scan: no `eval`, `exec`, `pickle` loading, `subprocess` or dynamic imports in
-  the package. Log calls carry identifiers and reasons only.
+  the package. Log calls carry identifiers and reasons only. The SQLite codec, added
+  after this review, imports the Pydantic class named on a stored record. That file
+  is trusted host storage.
 - Fixed during the review: validation error messages echoed input values (now
   location and reason only), and the library could print warnings without logging
   configuration (now a `NullHandler`).

@@ -28,6 +28,8 @@ specification requires (section 5 and 26).
 | `id42_work.outcomes.validators` | Built-in output-schema validator |
 | `id42_work.events.redaction` / `.dispatcher` | `default_redactor`, `EventDispatcher` |
 | `id42_work.storage.memory` | `MemoryStorage` and the in-memory repositories |
+| `id42_work.storage.sqlite` | `SqliteStorage`: file-backed repositories, schema migrations |
+| `id42_work.storage.codec` | JSON round-trip for records, inputs and outcome models (internal) |
 | `id42_work.testing` | `FakeOdooProvider`, `ManualClock`; `testing.contract.StorageContractSuite` (needs pytest) |
 | `id42_work.execution` | `Execution`, `ExecutionErrorInfo` |
 | `id42_work.approvals` | `Approval`, `ApprovalStatus`, `compute_action_digest` |
@@ -96,7 +98,7 @@ inconsistent record:
 
 | D29 | 5.8: `runner.approvals.approve(...)` is synchronous | `ApprovalManager` methods are `async`, with `approve_sync`, `reject_sync` and `list_pending_sync` | Storage is asynchronous (D7). |
 | D30 | 5.8: `cancel(...)` authorization not specified | `cancel` is allowed for the execution's own actor or a same-tenant actor holding the new grant prefix `cancel:<work_id>` | Operators need to cancel without being able to resume or approve. |
-| D31 | 5.8: `resume` | Executions that are not `READY`, or that this runner is already driving, are returned unchanged. A per-process claim prevents two concurrent drivers. | Makes `resume` safe to retry. Persistent storage will need execution leases (v0.2). |
+| D31 | 5.8: `resume` | A per-process claim prevents two concurrent drivers in one process. Executions this process is already driving are returned unchanged. | Makes `resume` safe to retry. A `RUNNING` execution whose driver died is recovered (D43). Cross-process leases are still open. |
 | D32 | 7: events of a decision | START/ACTION grant: `work.approval.granted`, then the transition `WAITING_APPROVAL -> READY` (`work.execution.authorized`, reason `approval_granted`). OUTCOME grant: `granted`, `consumed`, then `WAITING_REVIEW -> COMPLETED`. Rejection: `work.approval.rejected`, then `work.execution.rejected`. | One event per transition, plus the approval's own events. |
 | D33 | 5.8: whose grants count on resume | The policy is evaluated with the resuming actor's grants. The execution keeps its original `actor_id`, and the context and providers see that actor. | The resuming actor must be authorized now; the work's identity must stay stable for replay. |
 | D34 | 12.1: `ApprovalRepository` | Added `list_by_status(status)` | `expire_due` must find due approvals across executions. |
@@ -109,6 +111,8 @@ inconsistent record:
 | D39 | 3.2: `timeout` bounds the executor run; 9: a raising validator is a failed check | `timeout` also bounds the validation phase (a separate budget, from its start). A validator still running at the deadline fails its check. A raising validator's result names only the exception type; the exception is logged. | Without a bound, one hanging validator left the execution in `VALIDATING` forever. Exception text may quote input or output values. |
 | D40 | 12.1: `IdempotencyRepository` is `reserve, get` | Added `release(scope, execution_id)`. It drops the reservation only when that execution still owns it. | A call that fails before the execution exists must not pin the key. A waiter never releases a reservation it does not own. An input stored for the failed attempt is left behind; nothing references it. |
 | D41 | 12.2: an execution update and an event append are separate atomic operations | `Storage.commit_execution` stores the execution and appends its event, both or neither. `last_event_sequence` is the sequence that was appended. A sequence race retries; a lost revision does not. | Reading the sequence, then writing the execution, then appending the event could record a sequence the event did not get. |
+| D42 | 12.3: no durable persistence in 0.1.0 | `SqliteStorage` persists executions, journals, approvals, events, evidence, inputs and idempotency reservations in one SQLite file, with optimistic concurrency and a versioned schema. `MemoryStorage` is unchanged. | Hosts need crash recovery without a new required dependency. PostgreSQL remains the next backend; it must pass `StorageContractSuite`. |
+| D43 | 5.8 and 8.3: `resume` continues a suspended execution | `resume` also recovers a `RUNNING` execution left by a dead process. `IN_FLIGHT` journal entries become `UNCERTAIN` and the execution `FAILED` with `requires_reconciliation`; the provider is not called. With no `IN_FLIGHT` entry, the executor is replayed. A policy denial from `RUNNING` ends `FAILED` (`policy_denied_on_resume`), because the transition table has no `RUNNING -> DENIED`. | The suspended coroutine is gone. The journal is what survived. `READY -> DENIED` is unchanged. |
 
 The M3 note on expiry is resolved: an expired PENDING approval cancels its execution
 (reason `approval_expired`), as specification 7.5 requires. An expired GRANTED approval
@@ -217,3 +221,23 @@ never retries.
 - `cancel` moves `CREATED`, `READY`, `WAITING_APPROVAL` or `WAITING_REVIEW` to
   `CANCELLED` and invalidates open approvals. A running execution cannot be cancelled
   in 0.1.0.
+
+## Persistent storage
+
+`SqliteStorage` implements the same repositories as `MemoryStorage`. Writers use one
+immediate transaction, so compare-and-set and `commit_execution` either commit in
+full or leave the file unchanged. The schema version is applied on open. See
+[Storage](storage.md) for configuration, migrations and the recovery rules.
+
+`resume` of a `RUNNING` execution (D43):
+
+1. The definition digest and the stored input are checked, as for a `READY` resume.
+2. If the journal has an `IN_FLIGHT` action, each one is marked `UNCERTAIN` and the
+   execution fails with `requires_reconciliation`. The executor does not run.
+3. Otherwise the policy is evaluated again. A denial fails the execution. An
+   allowance replays the executor from the start without repeating `SUCCEEDED`
+   actions and without transitioning `RUNNING -> RUNNING`.
+
+A crash during `VALIDATING` is not recovered: the output is not stored until that
+phase finishes. Execution leases, PostgreSQL and a reconciliation tool are still
+open.
