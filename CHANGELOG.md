@@ -9,6 +9,11 @@ the public API; breaking changes are listed explicitly.
 
 ### Fixed
 
+- An idempotency key reserved by a call that fails before the execution exists is
+  released, so the same key can be retried. A reservation owned by another execution
+  is left in place.
+- A transition and its event are stored together. `last_event_sequence` is the
+  sequence of that event even when another event is appended at the same time.
 - The validation phase is now bounded by `execution_limits.timeout`. A hanging
   validator previously kept the execution in `VALIDATING` indefinitely; it now counts
   as a failed check.

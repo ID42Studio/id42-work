@@ -4,7 +4,14 @@ import pytest
 
 from _factories import make_policy, make_work
 from _runtime import INVOICE, PREPARE, READ, VALIDATE, Env, InvoiceExecutor
-from id42_work import AutonomyLevel, ExecutionStatus, IdempotencyConflictError, InputValidationError
+from id42_work import (
+    AutonomyLevel,
+    ExecutionStatus,
+    IdempotencyConflictError,
+    InputValidationError,
+    StorageError,
+)
+from id42_work.storage import IdempotencyScope
 
 S = ExecutionStatus
 
@@ -89,6 +96,84 @@ async def test_read_only_work_without_key_is_not_deduplicated() -> None:
 async def test_malformed_keys_are_rejected(key: str) -> None:
     with pytest.raises(InputValidationError, match="idempotency_key"):
         await Env().run(idempotency_key=key)
+
+
+async def test_a_storage_failure_without_a_key_does_not_touch_reservations() -> None:
+    env = Env()
+
+    async def fail_put(execution_id: object, data: object) -> str:
+        raise StorageError("disk full")
+
+    env.storage.inputs.put = fail_put  # type: ignore[method-assign]
+    with pytest.raises(StorageError, match="disk full"):
+        await env.run()
+
+
+async def test_a_failed_reservation_can_be_retried(caplog: pytest.LogCaptureFixture) -> None:
+    env = _side_effecting_env()
+    original = env.storage.inputs.put
+    attempts = {"put": 0}
+
+    async def fail_once(execution_id: object, data: object) -> str:
+        attempts["put"] += 1
+        if attempts["put"] == 1:
+            raise StorageError("disk full")
+        return await original(execution_id, data)  # type: ignore[arg-type]
+
+    env.storage.inputs.put = fail_once  # type: ignore[method-assign]
+    with pytest.raises(StorageError, match="disk full"):
+        await env.run(idempotency_key="k")
+    scope = IdempotencyScope(
+        tenant_id="acme", work_id=env.work.id, work_version="1.0.0", idempotency_key="k"
+    )
+    assert await env.storage.idempotency.get(scope) is None
+    retried = await env.run(idempotency_key="k")
+    assert retried.status is S.COMPLETED
+    assert env.provider.count(PREPARE) == 1
+
+    async def fail_release(scope: object, *, execution_id: object) -> None:
+        raise StorageError("release failed")
+
+    async def fail_put(execution_id: object, data: object) -> str:
+        raise StorageError("disk full")
+
+    env.storage.inputs.put = fail_put  # type: ignore[method-assign]
+    env.storage.idempotency.release = fail_release  # type: ignore[method-assign]
+    with (
+        caplog.at_level("WARNING", logger="id42_work.runner"),
+        pytest.raises(StorageError, match="disk full"),
+    ):
+        await env.run(idempotency_key="again")
+    messages = [record.getMessage() for record in caplog.records]
+    assert "could not release idempotency reservation" in messages
+
+
+async def test_a_failure_after_the_execution_exists_keeps_the_key() -> None:
+    env = Env()
+    original = env.storage.executions.replace
+    failed = {"done": False}
+
+    def fail_once(updated: object) -> None:
+        if not failed["done"]:
+            failed["done"] = True
+            raise StorageError("commit failed")
+        original(updated)  # type: ignore[arg-type]
+
+    env.storage.executions.replace = fail_once  # type: ignore[method-assign]
+    with pytest.raises(StorageError, match="commit failed"):
+        await env.run(idempotency_key="k")
+    scope = IdempotencyScope(
+        tenant_id="acme", work_id=env.work.id, work_version="1.0.0", idempotency_key="k"
+    )
+    record = await env.storage.idempotency.get(scope)
+    assert record is not None
+    stuck = await env.storage.executions.get(record.execution_id)
+    assert stuck is not None
+    assert stuck.status is S.CREATED
+    env.storage.executions.replace = original  # type: ignore[method-assign]
+    again = await env.run(idempotency_key="k")
+    assert again.execution_id == stuck.execution_id
+    assert again.status is S.CREATED
 
 
 async def test_denied_executions_are_idempotent_too() -> None:

@@ -252,6 +252,85 @@ class StorageContractSuite(ABC):
         other_tenant = scope.model_copy(update={"tenant_id": "other"})
         assert await repo.get(other_tenant) is None
 
+    @pytest.mark.asyncio
+    async def test_release_drops_only_the_owning_reservation(self) -> None:
+        repo = self.make_storage().idempotency
+        scope = IdempotencyScope(
+            tenant_id="tenant", work_id="contract_work", work_version="1.0.0", idempotency_key="k"
+        )
+        owner = uuid4()
+        record = IdempotencyRecord(scope=scope, input_fingerprint=_DIGEST, execution_id=owner)
+        await repo.reserve(record)
+        await repo.release(scope, execution_id=uuid4())
+        assert await repo.get(scope) == record
+        await repo.release(scope, execution_id=owner)
+        assert await repo.get(scope) is None
+        await repo.release(scope, execution_id=owner)
+        replacement = record.model_copy(update={"execution_id": uuid4()})
+        assert await repo.reserve(replacement) == replacement
+
+    @pytest.mark.asyncio
+    async def test_commit_execution_is_all_or_nothing(self) -> None:
+        storage = self.make_storage()
+        execution = _execution(last_event_sequence=1)
+        eid = execution.execution_id
+        created = _event(eid, 1)
+        await storage.commit_execution(execution, created, create=True)
+        assert await storage.executions.get(eid) == execution
+        assert [e.sequence_number for e in await storage.events.list(eid)] == [1]
+
+        with pytest.raises(StorageError):
+            await storage.commit_execution(execution, _event(eid, 2), create=True)
+        assert await storage.events.last_sequence(eid) == 1
+
+        foreign = execution.model_copy(update={"execution_id": uuid4(), "revision": 1})
+        with pytest.raises(StorageError, match="revision 0"):
+            await storage.commit_execution(foreign, _event(foreign.execution_id, 1), create=True)
+
+        with pytest.raises(StorageError, match="does not belong"):
+            await storage.commit_execution(execution, _event(uuid4(), 2))
+        assert await storage.events.last_sequence(eid) == 1
+
+        missing = _execution()
+        with pytest.raises(StorageError, match="does not exist"):
+            await storage.commit_execution(
+                transition_execution(
+                    missing, ExecutionStatus.POLICY_CHECK, at=_T0, last_event_sequence=1
+                ),
+                _event(missing.execution_id, 1),
+            )
+
+        stale = transition_execution(
+            execution, ExecutionStatus.POLICY_CHECK, at=_T0, last_event_sequence=2
+        )
+        await storage.executions.compare_and_set(
+            transition_execution(
+                execution, ExecutionStatus.POLICY_CHECK, at=_T0, last_event_sequence=1
+            )
+        )
+        with pytest.raises(ConcurrentModificationError):
+            await storage.commit_execution(stale, _event(eid, 2))
+        assert await storage.events.last_sequence(eid) == 1
+
+        current = await storage.executions.get(eid)
+        assert current is not None
+        raced = transition_execution(current, ExecutionStatus.READY, at=_T0, last_event_sequence=2)
+        with pytest.raises(ConcurrentModificationError):
+            await storage.commit_execution(raced, _event(eid, 1))
+        assert (await storage.executions.get(eid)) == current
+
+        committed = transition_execution(
+            current, ExecutionStatus.READY, at=_T0, last_event_sequence=2
+        )
+        await storage.commit_execution(
+            committed, _event(eid, 2).model_copy(update={"event_type": EventType.POLICY_EVALUATED})
+        )
+        stored = await storage.executions.get(eid)
+        assert stored == committed
+        assert stored is not None
+        assert stored.last_event_sequence == 2
+        assert await storage.events.last_sequence(eid) == 2
+
     # ------------------------------------------------------------------ evidence and inputs
 
     @pytest.mark.asyncio
