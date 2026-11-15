@@ -30,8 +30,9 @@ This requires deterministic executors. In exchange, waiting holds no resources, 
 the same model works with persistent storage, where a suspended coroutine cannot
 survive a restart.
 
-With `SqliteStorage`, `resume` also recovers an execution left `RUNNING` because the
-process stopped:
+With `SqliteStorage` or `PostgresStorage`, `resume` also recovers an execution left
+`RUNNING` because the process stopped. Another live process that already holds the
+resume claim is left alone. Otherwise:
 
 - `SUCCEEDED` actions are replayed and the provider is not called;
 - an action still `IN_FLIGHT` becomes `UNCERTAIN`, the execution ends `FAILED` with

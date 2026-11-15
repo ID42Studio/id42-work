@@ -6,6 +6,7 @@ writes the same records to a file. Every state change is a single atomic operati
 implementations must never use read-then-write.
 """
 
+from datetime import datetime, timedelta
 from typing import Protocol
 from uuid import UUID
 
@@ -146,6 +147,26 @@ class InputStore(Protocol):
 
 class Storage(Protocol):
     """The set of repositories a runner needs."""
+
+    async def claim_resume(
+        self, execution_id: UUID, owner: str, *, now: datetime, ttl: timedelta
+    ) -> bool:
+        """Reserve ``execution_id`` for ``owner``.
+
+        Return ``False`` when another live claim already holds it. A claim this
+        owner already holds is not taken a second time. ``now`` is the caller's
+        clock and ``ttl`` is how long a SQLite lease stays reserved by a live
+        process. PostgreSQL keeps a session lock instead and still validates both.
+        """
+        ...
+
+    async def release_resume(self, execution_id: UUID, owner: str) -> None:
+        """Drop the reservation when ``owner`` still holds it.
+
+        A reservation owned by someone else, or an execution that is already free,
+        is left unchanged.
+        """
+        ...
 
     async def commit_execution(
         self, updated: Execution, event: WorkEvent, *, create: bool = False

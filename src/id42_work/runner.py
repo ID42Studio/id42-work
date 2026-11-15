@@ -17,8 +17,9 @@ skipped.
 import asyncio
 import contextlib
 import logging
+import os
 import threading
-from collections.abc import Generator, Iterable, Mapping
+from collections.abc import AsyncGenerator, Generator, Iterable, Mapping
 from datetime import datetime, timedelta
 from uuid import UUID, uuid4
 
@@ -73,7 +74,13 @@ S = ExecutionStatus
 
 
 class WorkRunner:
-    """Runs registered works under host-resolved policies."""
+    """Runs registered works under host-resolved policies.
+
+    ``resume_claim_ttl`` is how long a live SQLite process keeps a resume claim.
+    PostgreSQL holds that claim until the connection closes instead. Keep the TTL
+    longer than the work's own timeout: after it elapses, another process may take
+    a claim whose pid is still alive.
+    """
 
     def __init__(
         self,
@@ -87,6 +94,7 @@ class WorkRunner:
         redactor: Redactor = default_redactor,
         dispatcher: EventDispatcher | None = None,
         idempotency_wait: timedelta = timedelta(seconds=2),
+        resume_claim_ttl: timedelta = timedelta(hours=1),
     ) -> None:
         self._registry = registry
         self._authority = actor_authority
@@ -101,6 +109,11 @@ class WorkRunner:
         self._engine = PolicyEngine(
             resolver=policies, capabilities=capabilities, actor_authority=actor_authority
         )
+        if resume_claim_ttl <= timedelta(0):
+            msg = "resume_claim_ttl must be positive"
+            raise ValueError(msg)
+        self._resume_claim_ttl = resume_claim_ttl
+        self._lease_owner = f"{os.getpid()}:{uuid4()}"
         self._approvals = ApprovalManager(recorder=self._rec, actor_authority=actor_authority)
         self._driving: set[UUID] = set()
         self._driving_lock = threading.Lock()
@@ -132,7 +145,8 @@ class WorkRunner:
         Returns the execution in its resulting state for every business outcome.
         Raises ``UntrustedActorError``, ``WorkRegistrationError``,
         ``InputValidationError`` or ``IdempotencyConflictError`` before any execution
-        is created; raises ``StorageError`` on storage failures.
+        is created; raises ``StorageError`` on storage failures. If another process
+        already holds the resume claim, the new execution is left in ``READY``.
         """
         trusted = self._authority.verify(actor, now=self._rec.now())
         binding = self._registry.get(work_id, version)
@@ -235,7 +249,9 @@ class WorkRunner:
             effective_autonomy=decision.effective_autonomy,
             granted_capabilities=decision.granted_capabilities,
         )
-        with self._claim(execution.execution_id):
+        async with self._exclusive(execution.execution_id) as claimed:
+            if not claimed:
+                return execution
             return await self._drive(execution, binding, validated, decision)
 
     def run_sync(
@@ -297,8 +313,8 @@ class WorkRunner:
         A ``RUNNING`` execution means the previous process stopped while driving it.
         Actions left ``IN_FLIGHT`` become ``UNCERTAIN`` and the execution ends ``FAILED``
         with ``requires_reconciliation``; they are not retried. With no ``IN_FLIGHT``
-        action, the executor is replayed from the start. The per-process claim still
-        applies: a second call in this process does not drive the execution again.
+        action, the executor is replayed from the start. A second call does not drive
+        the execution when this process, or another process, already holds the claim.
 
         ``actor`` must be the execution's actor (same tenant) or hold
         ``resume:<work_id>`` in the same tenant. Any other state is returned unchanged.
@@ -319,7 +335,7 @@ class WorkRunner:
         if execution.status is not S.READY:
             return execution
         binding, validated = await self._open_for_resume(execution)
-        with self._claim(execution_id) as claimed:
+        async with self._exclusive(execution_id) as claimed:
             if not claimed:
                 return execution
             decision = self._engine.evaluate(
@@ -428,7 +444,8 @@ class WorkRunner:
     def _claim(self, execution_id: UUID) -> Generator[bool]:
         """Mark an execution as driven by this runner; yields ``False`` if it already is.
 
-        Scope: one process. Persistent storage needs execution leases (roadmap v0.2).
+        Scope: one process. :meth:`_exclusive` also takes the storage claim, which
+        other processes can see.
         """
         with self._driving_lock:
             claimed = execution_id not in self._driving
@@ -440,6 +457,29 @@ class WorkRunner:
             if claimed:
                 with self._driving_lock:
                     self._driving.discard(execution_id)
+
+    @contextlib.asynccontextmanager
+    async def _exclusive(self, execution_id: UUID) -> AsyncGenerator[bool]:
+        """Yield ``True`` when this runner may drive ``execution_id``.
+
+        The in-process claim stops two tasks here. The storage claim stops another
+        process. Both are released on the way out, including when the body raises.
+        """
+        with self._claim(execution_id) as in_process:
+            if not in_process:
+                yield False
+                return
+            acquired = await self._rec.storage.claim_resume(
+                execution_id,
+                self._lease_owner,
+                now=self._rec.now(),
+                ttl=self._resume_claim_ttl,
+            )
+            try:
+                yield acquired
+            finally:
+                if acquired:
+                    await self._rec.storage.release_resume(execution_id, self._lease_owner)
 
     # ------------------------------------------------------------------ driving
 
@@ -467,7 +507,7 @@ class WorkRunner:
     ) -> Execution:
         """Recover a ``RUNNING`` execution whose driver is gone."""
         binding, validated = await self._open_for_resume(execution)
-        with self._claim(execution.execution_id) as claimed:
+        async with self._exclusive(execution.execution_id) as claimed:
             if not claimed:
                 return execution
             journal = await self._rec.storage.executions.list_journal(execution.execution_id)

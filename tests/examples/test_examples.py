@@ -1,5 +1,6 @@
 """Every runnable example must succeed (specification 15, 18)."""
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -17,12 +18,15 @@ def test_all_specified_examples_exist() -> None:
         "hello_work.py",
         "human_approval.py",
         "invoice_validation.py",
+        "postgres_resume.py",
         "sqlite_resume.py",
     ]
 
 
 @pytest.mark.parametrize("name", NAMES)
 def test_example_runs(name: str) -> None:
+    if name == "postgres_resume.py" and not os.environ.get("ID42_POSTGRES_DSN", "").strip():
+        pytest.skip("ID42_POSTGRES_DSN is not set")
     result = subprocess.run(  # noqa: S603
         [sys.executable, str(EXAMPLES / name)],
         capture_output=True,

@@ -27,6 +27,9 @@ classifiers = [
 ]
 dependencies = ["pydantic>=2.7,<3"]
 
+[project.optional-dependencies]
+postgres = ["psycopg[binary]>=3.2,<4"]
+
 [project.urls]
 Homepage = "https://github.com/ID42Studio/id42-work"
 Repository = "https://github.com/ID42Studio/id42-work"
@@ -54,6 +57,7 @@ minversion = "8.0"
 testpaths = ["tests"]
 pythonpath = ["tests"]
 addopts = ["-ra", "--strict-markers", "--strict-config"]
+markers = ["postgres: requires ID42_POSTGRES_DSN and the postgres extra"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 xfail_strict = true
@@ -62,6 +66,7 @@ filterwarnings = ["error"]
 [tool.coverage.run]
 source = ["id42_work"]
 branch = true
+relative_files = true
 
 [tool.coverage.report]
 show_missing = true

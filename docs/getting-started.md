@@ -24,11 +24,14 @@ uv run python examples/human_approval.py      # approvals, rejection, changed pa
 uv run python examples/async_execution.py     # concurrency and the sync API
 uv run python examples/fake_odoo_invoice.py   # gated ERP posting, uncertain outcomes
 uv run python examples/sqlite_resume.py       # the same approval, reopened from SQLite
+ID42_POSTGRES_DSN=postgresql://id42:id42@localhost:5432/id42 \
+  uv run python examples/postgres_resume.py     # the same flow on PostgreSQL
 ```
 
 Each example checks its own expectations and prints `OK`. They use synthetic data:
-no credentials are needed. `sqlite_resume.py` writes a temporary SQLite file. See
-[Storage](storage.md) to choose a backend.
+no credentials are needed. `sqlite_resume.py` writes a temporary SQLite file.
+`postgres_resume.py` needs the `postgres` extra and a server that can create a
+database. See [Storage](storage.md) to choose a backend.
 
 ## The five pieces you wire
 

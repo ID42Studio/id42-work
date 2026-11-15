@@ -9,8 +9,10 @@ connection inside one process; other processes are serialized by SQLite itself.
 ``:memory:`` builds a private database that dies with the connection. Crash recovery
 needs a file path.
 
-The runner's resume claim is still per process. Two live processes must not drive
-the same execution; execution leases are a later step.
+A resume claim is a row in ``execution_claims``, inserted inside ``BEGIN IMMEDIATE``.
+The row stores the owner's pid and an expiry. A dead pid can be taken over at once.
+A live pid keeps the row until release or until the lease expires, so two live
+processes cannot drive the same execution.
 """
 
 import contextlib
@@ -18,6 +20,7 @@ import os
 import sqlite3
 import threading
 from collections.abc import Generator, Sequence
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Self
 from uuid import UUID
@@ -30,6 +33,7 @@ from id42_work.evidence.models import Evidence
 from id42_work.exceptions import ConcurrentModificationError, StorageError
 from id42_work.execution import Execution
 from id42_work.journal import JournalEntry, JournalStatus
+from id42_work.storage.claims import claim_deadline
 from id42_work.storage.codec import (
     dump_execution,
     dump_input,
@@ -40,7 +44,7 @@ from id42_work.storage.codec import (
 )
 from id42_work.storage.protocols import IdempotencyRecord, IdempotencyScope
 
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 _NO_TENANT = ""
 _REGISTRY_STREAM = ""
 
@@ -131,7 +135,25 @@ _MIGRATION_1: tuple[str, ...] = (
     """,
 )
 
-_MIGRATIONS: tuple[tuple[int, tuple[str, ...]], ...] = ((_SCHEMA_VERSION, _MIGRATION_1),)
+_MIGRATION_2: tuple[str, ...] = (
+    """
+    CREATE TABLE execution_claims (
+        execution_id TEXT PRIMARY KEY,
+        owner TEXT NOT NULL,
+        pid INTEGER NOT NULL,
+        expires_at TEXT NOT NULL
+    )
+    """,
+    """
+    INSERT INTO schema_migrations (version, applied_at)
+    VALUES (2, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    """,
+)
+
+_MIGRATIONS: tuple[tuple[int, tuple[str, ...]], ...] = (
+    (1, _MIGRATION_1),
+    (_SCHEMA_VERSION, _MIGRATION_2),
+)
 
 
 def _database_name(path: str | os.PathLike[str]) -> str:
@@ -186,6 +208,72 @@ def _tenant_id(tenant_key: str) -> str | None:
     if tenant_key == _NO_TENANT:
         return None
     return tenant_key
+
+
+def _process_alive(pid: int) -> bool:
+    """Whether ``pid`` is a running process.
+
+    ``pid <= 0`` is not a process id (``kill`` would target a process group). A
+    permission error means the process exists and is owned by someone else.
+    """
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def _parse_expiry(value: object) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(str(value))
+    except ValueError as error:
+        msg = "stored resume claim expiry is invalid"
+        raise StorageError(msg) from error
+    if parsed.tzinfo is None:
+        msg = "stored resume claim expiry is invalid"
+        raise StorageError(msg)
+    return parsed.astimezone(UTC)
+
+
+def _take_claim(  # noqa: PLR0917
+    conn: sqlite3.Connection,
+    execution_id: UUID,
+    owner: str,
+    pid: int,
+    now: datetime,
+    expires: datetime,
+) -> bool:
+    eid = str(execution_id)
+    row = conn.execute(
+        "SELECT owner, pid, expires_at FROM execution_claims WHERE execution_id = ?",
+        (eid,),
+    ).fetchone()
+    if row is None:
+        conn.execute(
+            """
+            INSERT INTO execution_claims (execution_id, owner, pid, expires_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (eid, owner, pid, expires.isoformat()),
+        )
+        return True
+    current_pid = int(row[1])
+    current_expires = _parse_expiry(row[2])
+    if _process_alive(current_pid) and current_expires > now:
+        return False
+    conn.execute(
+        """
+        UPDATE execution_claims
+        SET owner = ?, pid = ?, expires_at = ?
+        WHERE execution_id = ?
+        """,
+        (owner, pid, expires.isoformat(), eid),
+    )
+    return True
 
 
 class _DB:
@@ -651,6 +739,26 @@ class SqliteStorage:
     def close(self) -> None:
         """Close the database. Further use raises ``StorageError``."""
         self._db.close()
+
+    async def claim_resume(
+        self, execution_id: UUID, owner: str, *, now: datetime, ttl: timedelta
+    ) -> bool:
+        """Reserve ``execution_id`` for ``owner`` inside one immediate transaction.
+
+        A row whose pid is no longer running can be taken at once. A live pid keeps
+        the row until ``ttl`` has passed or that owner releases it.
+        """
+        expires = claim_deadline(owner, now, ttl)
+        with self._db.transaction() as conn:
+            return _take_claim(conn, execution_id, owner, os.getpid(), now.astimezone(UTC), expires)
+
+    async def release_resume(self, execution_id: UUID, owner: str) -> None:
+        """Drop the reservation when ``owner`` still holds it."""
+        with self._db.transaction() as conn:
+            conn.execute(
+                "DELETE FROM execution_claims WHERE execution_id = ? AND owner = ?",
+                (str(execution_id), owner),
+            )
 
     def __enter__(self) -> Self:
         return self

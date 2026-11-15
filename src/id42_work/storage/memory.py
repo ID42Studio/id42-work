@@ -10,6 +10,7 @@ import contextlib
 import threading
 from collections.abc import Generator
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -20,6 +21,7 @@ from id42_work.evidence.models import Evidence
 from id42_work.exceptions import ConcurrentModificationError, StorageError
 from id42_work.execution import Execution
 from id42_work.journal import JournalEntry, JournalStatus
+from id42_work.storage.claims import claim_deadline
 from id42_work.storage.protocols import IdempotencyRecord, IdempotencyScope
 
 
@@ -256,9 +258,24 @@ class MemoryInputStore:
             return self._inputs.get(reference)
 
 
+def _empty_claims() -> dict[UUID, tuple[str, datetime]]:
+    return {}
+
+
 @dataclass(frozen=True, slots=True)
 class MemoryStorage:
     """All in-memory repositories, bundled for ``WorkRunner``."""
+
+    executions: MemoryExecutionRepository = field(default_factory=MemoryExecutionRepository)
+    approvals: MemoryApprovalRepository = field(default_factory=MemoryApprovalRepository)
+    events: MemoryEventRepository = field(default_factory=MemoryEventRepository)
+    idempotency: MemoryIdempotencyRepository = field(default_factory=MemoryIdempotencyRepository)
+    evidence: MemoryEvidenceRepository = field(default_factory=MemoryEvidenceRepository)
+    inputs: MemoryInputStore = field(default_factory=MemoryInputStore)
+    _claims: dict[UUID, tuple[str, datetime]] = field(
+        default_factory=_empty_claims, compare=False, repr=False
+    )
+    _claims_lock: threading.Lock = field(default_factory=threading.Lock, compare=False, repr=False)
 
     async def commit_execution(
         self, updated: Execution, event: WorkEvent, *, create: bool = False
@@ -279,9 +296,26 @@ class MemoryStorage:
                 self.executions.replace(updated)
             self.events.add(event)
 
-    executions: MemoryExecutionRepository = field(default_factory=MemoryExecutionRepository)
-    approvals: MemoryApprovalRepository = field(default_factory=MemoryApprovalRepository)
-    events: MemoryEventRepository = field(default_factory=MemoryEventRepository)
-    idempotency: MemoryIdempotencyRepository = field(default_factory=MemoryIdempotencyRepository)
-    evidence: MemoryEvidenceRepository = field(default_factory=MemoryEvidenceRepository)
-    inputs: MemoryInputStore = field(default_factory=MemoryInputStore)
+    async def claim_resume(
+        self, execution_id: UUID, owner: str, *, now: datetime, ttl: timedelta
+    ) -> bool:
+        """Reserve ``execution_id`` for ``owner`` until ``ttl`` elapses.
+
+        Memory disappears with the process, so a dead pid needs no separate check.
+        Callers that share one instance still cannot both hold the reservation.
+        """
+        expires = claim_deadline(owner, now, ttl)
+        aware_now = now.astimezone(UTC)
+        with self._claims_lock:
+            current = self._claims.get(execution_id)
+            if current is not None and current[1] > aware_now:
+                return False
+            self._claims[execution_id] = (owner, expires)
+            return True
+
+    async def release_resume(self, execution_id: UUID, owner: str) -> None:
+        """Drop the reservation when ``owner`` still holds it."""
+        with self._claims_lock:
+            current = self._claims.get(execution_id)
+            if current is not None and current[0] == owner:
+                del self._claims[execution_id]
