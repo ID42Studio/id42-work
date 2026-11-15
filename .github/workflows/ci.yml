@@ -37,7 +37,59 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - run: uv sync --all-extras --dev --locked
-      - run: uv run pytest --cov --cov-report=term --cov-fail-under=100
+      - run: uv run pytest --cov --cov-report=term
+      - uses: actions/upload-artifact@v7
+        with:
+          name: coverage-py${{ matrix.python-version }}
+          path: .coverage
+          include-hidden-files: true
+
+  test-postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: id42
+          POSTGRES_PASSWORD: id42
+          POSTGRES_DB: id42
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U id42 -d id42"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          python-version: "3.12"
+      - run: uv sync --all-extras --dev --locked
+      - run: uv run pytest --cov --cov-report=term
+        env:
+          ID42_POSTGRES_DSN: postgresql://id42:id42@localhost:5432/id42
+      - uses: actions/upload-artifact@v7
+        with:
+          name: coverage-postgres
+          path: .coverage
+          include-hidden-files: true
+
+  coverage:
+    runs-on: ubuntu-latest
+    needs: [test, test-postgres]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          python-version: "3.12"
+      - run: uv sync --all-extras --dev --locked
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: coverage-*
+          path: coverage-parts
+      - run: uv run coverage combine coverage-parts/*/.coverage
+      - run: uv run coverage report --fail-under=100
 
   docs:
     runs-on: ubuntu-latest
@@ -52,7 +104,7 @@ jobs:
 
   build:
     runs-on: ubuntu-latest
-    needs: [lint, test, docs]
+    needs: [lint, test, test-postgres, coverage, docs]
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.3.3
