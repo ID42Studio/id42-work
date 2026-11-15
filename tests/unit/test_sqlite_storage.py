@@ -50,11 +50,11 @@ class Box:
 def test_file_reopen_keeps_schema_version(tmp_path: Path) -> None:
     path = tmp_path / "nested" / "work.sqlite"
     with SqliteStorage(path) as storage:
-        assert storage.schema_version == 1
+        assert storage.schema_version == 2
         assert storage.path == str(path)
     reopened = SqliteStorage(path)
     try:
-        assert reopened.schema_version == 1
+        assert reopened.schema_version == 2
         reopened.close()
         reopened.close()
     finally:
@@ -64,7 +64,7 @@ def test_file_reopen_keeps_schema_version(tmp_path: Path) -> None:
 def test_memory_database_is_private() -> None:
     with SqliteStorage(":memory:") as first, SqliteStorage(":memory:") as second:
         assert first.path == ":memory:"
-        assert second.schema_version == 1
+        assert second.schema_version == 2
 
 
 def test_rejects_empty_path_negative_timeout_and_a_directory(tmp_path: Path) -> None:
@@ -83,10 +83,30 @@ async def test_closed_storage_refuses_callers(tmp_path: Path) -> None:
         await storage.executions.get(uuid4())
 
 
+def test_version_1_file_gains_the_claim_table(tmp_path: Path) -> None:
+    path = tmp_path / "work.sqlite"
+    SqliteStorage(path).close()
+    _edit(path, "DROP TABLE execution_claims")
+    _edit(path, "DELETE FROM schema_migrations WHERE version = 2")
+    reopened = SqliteStorage(path)
+    try:
+        assert reopened.schema_version == 2
+    finally:
+        reopened.close()
+    connection = sqlite3.connect(path)
+    try:
+        found = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'execution_claims'"
+        ).fetchone()
+    finally:
+        connection.close()
+    assert found is not None
+
+
 async def test_newer_schema_is_refused(tmp_path: Path) -> None:
     path = tmp_path / "work.sqlite"
     SqliteStorage(path).close()
-    _edit(path, "UPDATE schema_migrations SET version = 9")
+    _edit(path, "UPDATE schema_migrations SET version = 9 WHERE version = 2")
     with pytest.raises(StorageError, match="newer"):
         SqliteStorage(path)
 
