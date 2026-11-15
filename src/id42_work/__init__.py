@@ -2,6 +2,7 @@
 
 import logging
 from importlib.metadata import PackageNotFoundError, version
+from typing import TYPE_CHECKING
 
 from id42_work.actors import ActorAuthority, TrustedActor
 from id42_work.approvals import Approval, ApprovalStatus
@@ -63,6 +64,24 @@ from id42_work.runner import WorkRunner
 from id42_work.states import TRANSITIONS, ExecutionStatus
 from id42_work.storage import MemoryStorage, SqliteStorage
 
+if TYPE_CHECKING:
+    from id42_work.storage.postgres import PostgresStorage
+
+
+def __getattr__(name: str) -> object:
+    """Load ``PostgresStorage`` only when the caller asks for it.
+
+    The class needs ``psycopg``, which is not a required dependency. Importing the
+    package must keep working without the ``postgres`` extra.
+    """
+    if name == "PostgresStorage":
+        from id42_work.storage.postgres import PostgresStorage  # noqa: PLC0415
+
+        return PostgresStorage
+    msg = f"module {__name__!r} has no attribute {name!r}"
+    raise AttributeError(msg)
+
+
 # A library must not emit log records unless the application configures logging.
 logging.getLogger("id42_work").addHandler(logging.NullHandler())
 
@@ -118,6 +137,7 @@ __all__ = [
     "PolicyEngine",
     "PolicyError",
     "PolicyResolver",
+    "PostgresStorage",
     "Severity",
     "SqliteStorage",
     "StaticPolicyResolver",
