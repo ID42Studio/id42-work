@@ -5,19 +5,25 @@ is a direction, not a promise.
 
 ## v0.2: persistent execution
 
-Done in the first slice (SQLite, no new required dependency):
+Done:
 
-- `SqliteStorage` passes `id42_work.testing.contract.StorageContractSuite`.
+- `SqliteStorage` passes `id42_work.testing.contract.StorageContractSuite`. It uses
+  the standard library only.
+- `PostgresStorage` (`id42-work[postgres]`, psycopg 3) passes the same contract.
+  CI runs the suite against PostgreSQL 18.
 - Approvals, journals, events, evidence, inputs and idempotency reservations survive
   the process.
 - Crash recovery through replay. `resume` of a `RUNNING` execution left by a dead
   process replays `SUCCEEDED` actions. Actions left `IN_FLIGHT` become `UNCERTAIN`
   and the execution ends `FAILED` with `requires_reconciliation`.
+- A resume claim is visible across processes. SQLite stores a lease (owner, pid,
+  expiry) inside `BEGIN IMMEDIATE`. PostgreSQL holds a session advisory lock, which
+  ends when the connection closes.
 
 Still open:
 
-- PostgreSQL storage, same contract, as an optional extra.
-- Execution leases, replacing the per-process resume claim.
+- Recovering a crash during `VALIDATING`. The output is not stored until that phase
+  finishes, and `resume` does not invent it.
 - Reconciliation tooling for uncertain side effects.
 - Registry-level events (`work.definition.registered` / `replaced`).
 

@@ -84,12 +84,13 @@ action is detected and fails the execution.
 **Persistence.** `MemoryStorage` is scoped to one process. Executions, approvals,
 journals and events disappear when that process exits.
 
-`SqliteStorage` writes the same records to a file. After a restart, `resume`
-replays completed actions and marks an `IN_FLIGHT` action `UNCERTAIN` instead of
-calling the provider again. The claim that prevents two concurrent resumes is still
-per process: two live processes can both drive one execution. There are no
-cross-process leases and no distributed consistency. The database file is trusted
-host storage. Actor seals are not in it; the host issues new actors after a restart.
+`SqliteStorage` writes the same records to a file. `PostgresStorage` writes them to
+PostgreSQL. After a restart, `resume` replays completed actions and marks an
+`IN_FLIGHT` action `UNCERTAIN` instead of calling the provider again. A resume claim
+stops a second live process from driving the same execution: a SQLite lease row, or
+a PostgreSQL session advisory lock that ends when the connection closes. There is
+no distributed transaction with the external system. The database is trusted host
+storage. Actor seals are not in it; the host issues new actors after a restart.
 
 **What the records may contain.**
 
