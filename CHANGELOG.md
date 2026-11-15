@@ -12,17 +12,26 @@ the public API; breaking changes are listed explicitly.
 - `SqliteStorage` persists executions, journals, approvals, events, evidence, inputs
   and idempotency reservations in one SQLite file. It uses the standard library only
   and passes the storage contract. The schema is versioned and migrated on open.
+- `PostgresStorage` (`id42-work[postgres]`, psycopg 3) persists the same records in
+  PostgreSQL and passes the same contract. The schema is migrated on open. The driver
+  stays optional: importing the package does not require it.
 - `resume` recovers a `RUNNING` execution after the process stops. Completed actions
   are replayed. An action left `IN_FLIGHT` becomes `UNCERTAIN`, and the execution
   ends `FAILED` with `requires_reconciliation`, without calling the provider again.
+- A resume claim stops two processes from driving the same execution. SQLite stores a
+  lease (owner, pid, expiry) inside `BEGIN IMMEDIATE` and takes over a dead pid at
+  once. PostgreSQL holds a session advisory lock until the connection closes.
+  `resume_claim_ttl` (default one hour) is how long a live SQLite process keeps the
+  lease. A SQLite file from the previous slice migrates to schema version 2 on open.
 - `examples/sqlite_resume.py` reopens a database, keeps an approval bound to its
-  digest, and resumes.
+  digest, and resumes. `examples/postgres_resume.py` does the same on PostgreSQL.
 
 ### Documentation
 
-- `docs/storage.md` describes the backends, configuration, migrations and limits.
-  Architecture deviations D42 and D43 record the SQLite adapter and crash recovery.
-  PostgreSQL and execution leases stay on the roadmap.
+- `docs/storage.md` describes the backends, configuration, migrations, the resume
+  claim and the limits. Architecture deviations D31, D42 and D43 record the adapters,
+  the claim and crash recovery. Recovering a crash during `VALIDATING` stays open:
+  the output is not stored until that phase finishes.
 
 ## [0.1.0rc2] - 2026-11-14
 

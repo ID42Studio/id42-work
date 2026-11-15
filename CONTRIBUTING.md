@@ -17,6 +17,8 @@ Studio and accepts external contributions under the Apache-2.0 license.
 ```bash
 uv sync --all-extras --dev
 uv run pytest                  # unit, integration, security, concurrency, contract, examples
+# Branch coverage of PostgresStorage needs a server:
+# ID42_POSTGRES_DSN=postgresql://id42:id42@localhost:5432/id42 uv run pytest --cov --cov-fail-under=100
 uv run ruff check .
 uv run ruff format --check .
 uv run pyright                 # strict on src/

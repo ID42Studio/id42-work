@@ -5,9 +5,10 @@
 A lightweight Python SDK for reliable, governed execution of work by software systems
 and AI agents.
 
-> **Status: 0.1.0 release candidate, pre-alpha.** Storage is in memory only: nothing
-> survives the process. Not production-ready and not enterprise-ready. The package is
-> not yet published on PyPI. See [Project maturity](#project-maturity).
+> **Status: 0.1.0 release candidate, pre-alpha.** `SqliteStorage` and `PostgresStorage`
+> survive the process; `MemoryStorage` does not. Not production-ready and not
+> enterprise-ready. The package is not yet published on PyPI. See
+> [Project maturity](#project-maturity).
 
 ## What it does
 
@@ -219,7 +220,7 @@ host app ──► WorkRunner.run ──► PolicyEngine (deny by default, no LL
          state machine ──► ExecutionContext.invoke ──► CapabilityProvider ──► ERP / APIs
                  │               (grant, gate, journal, replay)
                  ▼
-          validators ──► Outcome ──► evidence + events ──► MemoryStorage or SqliteStorage
+          validators ──► Outcome ──► evidence + events ──► Memory, SQLite or PostgreSQL
 ```
 
 Details, module map and every deviation from the specification are in
@@ -229,9 +230,10 @@ Details, module map and every deviation from the specification are in
 ## Project maturity
 
 - Version 0.1.0 release candidate, licensed Apache-2.0, maintained by ID42 Studio.
-- `MemoryStorage` is in-memory. `SqliteStorage` persists to a file and resumes after
-  a restart. The resume claim is still per process; there is no PostgreSQL backend
-  yet. See `docs/storage.md`.
+- `MemoryStorage` is in-memory. `SqliteStorage` persists to a file.
+  `PostgresStorage` (`id42-work[postgres]`) persists to PostgreSQL. Both resume
+  after a restart, and a claim stops two live processes from driving one execution.
+  A crash during `VALIDATING` is not recovered yet. See `docs/storage.md`.
 - Capability enforcement covers calls made through the SDK. It cannot stop arbitrary
   Python code in the same process from calling external systems directly.
 - The SDK cannot guarantee exactly-once external side effects. Uncertain results are
@@ -241,10 +243,10 @@ Details, module map and every deviation from the specification are in
 
 ## Roadmap
 
-No dates are committed. SQLite storage and crash recovery are in the tree. Still
-open: PostgreSQL, execution leases, framework adapters (LangGraph, PydanticAI), an
-Odoo 18 connector package, and workflow composition. See
-[docs/roadmap.md](docs/roadmap.md).
+No dates are committed. SQLite, PostgreSQL and cross-process resume claims are in
+the tree. Still open: recovering a crash during `VALIDATING`, reconciliation
+tooling, framework adapters (LangGraph, PydanticAI), an Odoo 18 connector package,
+and workflow composition. See [docs/roadmap.md](docs/roadmap.md).
 
 ## Contributing
 
