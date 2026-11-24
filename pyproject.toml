@@ -29,6 +29,7 @@ dependencies = ["pydantic>=2.7,<3"]
 
 [project.optional-dependencies]
 postgres = ["psycopg[binary]>=3.2,<4"]
+pydantic-ai = ["pydantic-ai-slim>=2.73,<3"]
 
 [project.urls]
 Homepage = "https://github.com/ID42Studio/id42-work"

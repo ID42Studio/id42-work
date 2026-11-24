@@ -61,12 +61,46 @@ class FakeOdooProvider:
         self.failure_hook: FailureHook | None = None
 
     def capabilities(self) -> list[CapabilitySpec]:
+        move = _object_schema({"move_id": {"type": "integer"}}, ["move_id"])
         return [
-            CapabilitySpec(name=PARTNER_READ, side_effecting=False, description="Read a partner"),
-            CapabilitySpec(name=INVOICE_READ, side_effecting=False, description="Read a move"),
-            CapabilitySpec(name=INVOICE_PREPARE, side_effecting=True, description="Draft a move"),
-            CapabilitySpec(name=INVOICE_VALIDATE, side_effecting=True, description="Check a move"),
-            CapabilitySpec(name=INVOICE_POST, side_effecting=True, description="Post a move"),
+            CapabilitySpec(
+                name=PARTNER_READ,
+                side_effecting=False,
+                description="Read a supplier (partner) by its reference, e.g. SUP-001.",
+                params_schema=_object_schema({"ref": {"type": "string"}}, ["ref"]),
+            ),
+            CapabilitySpec(
+                name=INVOICE_READ,
+                side_effecting=False,
+                description="Read a vendor bill (move) by id.",
+                params_schema=move,
+            ),
+            CapabilitySpec(
+                name=INVOICE_PREPARE,
+                side_effecting=True,
+                description="Create a draft vendor bill. Returns the new move.",
+                params_schema=_object_schema(
+                    {
+                        "partner_ref": {"type": "string"},
+                        "invoice_number": {"type": "string"},
+                        "amount": {"type": "string", "description": "Decimal amount, e.g. 1250.00"},
+                        "currency": {"type": "string", "pattern": "^[A-Z]{3}$"},
+                    },
+                    ["partner_ref", "invoice_number", "amount", "currency"],
+                ),
+            ),
+            CapabilitySpec(
+                name=INVOICE_VALIDATE,
+                side_effecting=True,
+                description="Check a draft vendor bill before posting.",
+                params_schema=move,
+            ),
+            CapabilitySpec(
+                name=INVOICE_POST,
+                side_effecting=True,
+                description="Post a draft vendor bill to the ledger.",
+                params_schema=move,
+            ),
         ]
 
     async def invoke(
@@ -170,3 +204,13 @@ def _amount(value: object) -> str:
     except InvalidOperation as error:
         msg = f"invalid amount {value!r}"
         raise ValueError(msg) from error
+
+
+def _object_schema(properties: dict[str, JsonValue], required: list[str]) -> dict[str, JsonValue]:
+    required_names: list[JsonValue] = list(required)
+    return {
+        "type": "object",
+        "properties": properties,
+        "required": required_names,
+        "additionalProperties": False,
+    }
