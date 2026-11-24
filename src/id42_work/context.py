@@ -6,14 +6,22 @@ actor authority: every capability call goes through a function supplied by the r
 
 import logging
 from collections.abc import Awaitable, Callable, Mapping
+from types import MappingProxyType
 from uuid import UUID
 
 from pydantic import BaseModel, JsonValue
 
 from id42_work.evidence.models import EvidenceType
+from id42_work.policy.capabilities import CapabilitySpec
 
 InvokeFn = Callable[[str, str, Mapping[str, object]], Awaitable[JsonValue]]
 """``(capability, action_id, params) -> result``, provided by the runner."""
+
+ComputeFn = Callable[[], Awaitable[JsonValue]]
+"""A non-deterministic computation whose JSON result ``context.record`` journals."""
+
+RecordFn = Callable[[str, object, ComputeFn], Awaitable[JsonValue]]
+"""``(action_id, fingerprint, compute) -> result``, provided by the runner."""
 
 
 class ExecutionSuspended(BaseException):
@@ -57,6 +65,8 @@ class RunContext:
         granted_capabilities: frozenset[str],
         invoke: InvokeFn,
         new_evidence_id: Callable[[], UUID],
+        record: RecordFn,
+        capability_specs: Mapping[str, CapabilitySpec],
     ) -> None:
         self._execution_id = execution_id
         self._work_id = work_id
@@ -65,6 +75,10 @@ class RunContext:
         self._tenant_id = tenant_id
         self._granted = granted_capabilities
         self._invoke = invoke
+        self._record = record
+        self._specs = MappingProxyType(
+            {name: spec for name, spec in capability_specs.items() if name in granted_capabilities}
+        )
         self._new_evidence_id = new_evidence_id
         self._evidence: list[tuple[UUID, PendingEvidence]] = []
         self._logger = logging.getLogger(f"id42_work.work.{work_id}")
@@ -94,6 +108,10 @@ class RunContext:
         return self._granted
 
     @property
+    def capability_specs(self) -> Mapping[str, CapabilitySpec]:
+        return self._specs
+
+    @property
     def logger(self) -> logging.Logger:
         return self._logger
 
@@ -101,6 +119,9 @@ class RunContext:
         self, capability: str, *, action_id: str, params: Mapping[str, object]
     ) -> JsonValue:
         return await self._invoke(capability, action_id, params)
+
+    async def record(self, action_id: str, *, fingerprint: object, compute: ComputeFn) -> JsonValue:
+        return await self._record(action_id, fingerprint, compute)
 
     def add_evidence(
         self,

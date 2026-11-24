@@ -9,6 +9,7 @@ from types import MappingProxyType
 
 from id42_work.contracts import CapabilityProvider
 from id42_work.exceptions import WorkRegistrationError
+from id42_work.identifiers import RESERVED_CAPABILITY_PREFIX
 from id42_work.policy.capabilities import CapabilitySpec
 
 
@@ -27,7 +28,8 @@ class CapabilityRegistry:
         """Register every capability ``provider`` declares.
 
         Raises ``WorkRegistrationError`` if a capability is already provided, if the
-        provider declares the same capability twice, or declares nothing. The registry
+        provider declares the same capability twice, declares nothing, or uses the
+        reserved ``id42.`` namespace. The registry
         is unchanged when an error is raised.
         """
         specs = list(provider.capabilities())
@@ -38,6 +40,10 @@ class CapabilityRegistry:
         for spec in specs:
             if not isinstance(spec, CapabilitySpec):  # pyright: ignore[reportUnnecessaryIsInstance]
                 msg = f"provider {type(provider).__name__} returned a non-CapabilitySpec value"
+                raise WorkRegistrationError(msg)
+            if spec.name.startswith(RESERVED_CAPABILITY_PREFIX):
+                prefix = RESERVED_CAPABILITY_PREFIX
+                msg = f"capability {spec.name!r} uses the reserved {prefix!r} namespace"
                 raise WorkRegistrationError(msg)
             if spec.name in names:
                 msg = f"provider declares capability {spec.name!r} twice"

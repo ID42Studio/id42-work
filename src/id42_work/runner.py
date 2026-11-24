@@ -47,6 +47,7 @@ from id42_work.evidence.models import Evidence, EvidenceType
 from id42_work.exceptions import (
     ConcurrentModificationError,
     ExecutionError,
+    ExecutionFailedError,
     IdempotencyConflictError,
     InputValidationError,
     PolicyDeniedError,
@@ -608,6 +609,7 @@ class WorkRunner:
                 extra_changes=first_changes,
             )
         state = RunState()
+        invoker = ActionInvoker(self._rec, execution, decision, state)
         context = RunContext(
             execution_id=execution.execution_id,
             work_id=execution.work_id,
@@ -615,8 +617,10 @@ class WorkRunner:
             actor_id=execution.actor_id,
             tenant_id=execution.tenant_id,
             granted_capabilities=decision.granted_capabilities,
-            invoke=ActionInvoker(self._rec, execution, decision, state),
+            invoke=invoker,
             new_evidence_id=uuid4,
+            record=invoker.record,
+            capability_specs=self._rec.capabilities.specs,
         )
         output: object = None
         failure: BaseException | None = None
@@ -625,7 +629,7 @@ class WorkRunner:
         timeout_cm = asyncio.timeout(limit.total_seconds() if limit else None)
         try:
             async with timeout_cm:
-                output = await binding.executor.execute(validated, context)
+                output = await _execute(binding, validated, context)
         except ExecutionSuspended:
             state.suspended = True
         except TimeoutError as error:
@@ -834,6 +838,24 @@ async def _release_reservation(
             extra={"execution.id": str(execution_id)},
             exc_info=True,
         )
+
+
+async def _execute(binding: WorkBinding, validated: BaseModel, context: RunContext) -> object:
+    """Run the executor, normalizing exception groups from executors that use task groups.
+
+    A group holding the suspension signal becomes that signal. A group of ordinary
+    errors is re-raised as is (it is an ``Exception``). Any other group becomes an
+    ``ExecutionFailedError``, except ``KeyboardInterrupt`` and ``SystemExit``.
+    """
+    try:
+        return await binding.executor.execute(validated, context)
+    except BaseExceptionGroup as group:
+        if isinstance(group, Exception) or group.subgroup((KeyboardInterrupt, SystemExit)):
+            raise
+        if group.subgroup(ExecutionSuspended) is not None:
+            raise ExecutionSuspended from group
+        msg = "the executor's task group was interrupted"
+        raise ExecutionFailedError(msg) from group
 
 
 def _check_operator(actor: TrustedActor, execution: Execution, grant: str, operation: str) -> None:

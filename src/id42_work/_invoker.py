@@ -12,7 +12,7 @@ from pydantic import JsonValue, TypeAdapter, ValidationError
 
 from id42_work._recorder import ExecutionRecorder
 from id42_work.canonical import digest
-from id42_work.context import ExecutionSuspended, InvokeFn
+from id42_work.context import ComputeFn, ExecutionSuspended, InvokeFn
 from id42_work.events.models import EventType
 from id42_work.evidence.models import EvidenceType
 from id42_work.exceptions import (
@@ -23,7 +23,7 @@ from id42_work.exceptions import (
     UncertainOutcomeError,
 )
 from id42_work.execution import Execution
-from id42_work.identifiers import ACTION_ID_PATTERN
+from id42_work.identifiers import ACTION_ID_PATTERN, RECORD_CAPABILITY
 from id42_work.journal import JournalEntry, JournalStatus, operation_id
 from id42_work.policy.capabilities import CapabilityCall
 from id42_work.policy.models import ApprovalGate, PolicyDecision
@@ -95,6 +95,112 @@ class ActionInvoker:
         return await self._perform(
             capability, action_id, params, params_digest=params_digest, entry=entry, payload=payload
         )
+
+    async def record(self, action_id: str, fingerprint: object, compute: ComputeFn) -> JsonValue:
+        """Journal ``compute()``'s JSON result, or replay it (``context.record``).
+
+        Counts toward ``max_actions``. No grant or gate applies: a recorded computation
+        reaches nothing outside the executor through the SDK. Its failures are never
+        uncertain, so an interrupted or failed entry left by an earlier run is computed
+        again.
+        """
+        state, eid = self._state, self._eid
+        fingerprint_digest = self._count(action_id, fingerprint)
+        journal = self._rec.storage.executions
+        entries = {e.action_id: e for e in await journal.list_journal(eid)}
+        entry = entries.get(action_id)
+        payload: dict[str, JsonValue] = {
+            "action_id": action_id,
+            "capability": RECORD_CAPABILITY,
+            "operation_id": str(operation_id(eid, action_id)),
+            "params_digest": fingerprint_digest,
+        }
+        if entry is not None:
+            same = (
+                entry.capability == RECORD_CAPABILITY and entry.params_digest == fingerprint_digest
+            )
+            if entry.status in {JournalStatus.SUCCEEDED, JournalStatus.FAILED} and not same:
+                msg = f"replayed record {action_id!r} differs from the journal"
+                raise state.fail(
+                    NonDeterministicExecutionError(msg, execution_id=eid), "non_deterministic"
+                )
+            if entry.status is JournalStatus.SUCCEEDED:
+                await self._rec.emit(self._execution, EventType.ACTION_REPLAYED, payload)
+                return entry.result
+            if entry.status is JournalStatus.FAILED:
+                msg = f"replayed record {action_id!r} failed previously"
+                raise ExecutionFailedError(msg, execution_id=eid)
+        started = self._rec.now()
+        in_flight = journal_entry(
+            eid,
+            action_id,
+            RECORD_CAPABILITY,
+            fingerprint_digest,
+            JournalStatus.IN_FLIGHT,
+            started_at=started,
+        )
+        if entry is None:
+            await journal.append_journal(in_flight)
+        else:
+            await journal.update_journal(in_flight, expected_status=entry.status)
+        await self._rec.emit(self._execution, EventType.ACTION_INVOKED, payload)
+        try:
+            raw = await compute()
+        except Exception as error:
+            await self._rec.settle(in_flight, JournalStatus.FAILED, error)
+            await self._rec.emit(self._execution, EventType.ACTION_FAILED, payload)
+            raise
+        except BaseException as error:  # cancellation or timeout: nothing outside changed
+            await self._rec.settle(in_flight, JournalStatus.FAILED, error)
+            raise
+        try:
+            result = _JSON.validate_python(raw)
+            result_digest = digest(result, floats="repr")
+        except (ValidationError, TypeError) as error:
+            await self._rec.settle(in_flight, JournalStatus.FAILED, error)
+            msg = f"record {action_id!r} produced a non-JSON result"
+            raise state.fail(
+                ExecutionFailedError(msg, execution_id=eid), "invalid_record_result"
+            ) from error
+        done = JournalEntry.model_validate(
+            {
+                **in_flight.model_dump(),
+                "status": JournalStatus.SUCCEEDED,
+                "result": result,
+                "result_digest": result_digest,
+                "finished_at": max(self._rec.now(), started),
+            }
+        )
+        await journal.update_journal(done, expected_status=JournalStatus.IN_FLIGHT)
+        await self._rec.emit(
+            self._execution, EventType.ACTION_COMPLETED, {**payload, "result_digest": result_digest}
+        )
+        return result
+
+    def _count(self, action_id: str, fingerprint: object) -> str:
+        """Checks shared by ``record``: suspension, id, uniqueness, limit, fingerprint."""
+        state, eid = self._state, self._eid
+        if state.suspended:
+            raise ExecutionSuspended
+        if not valid_action_id(action_id):
+            msg = f"invalid action_id {action_id!r}"
+            raise state.fail(ExecutionError(msg, execution_id=eid), "invalid_action_id")
+        if action_id in state.used_action_ids:
+            msg = f"action_id {action_id!r} was already used in this run"
+            raise state.fail(ExecutionError(msg, execution_id=eid), "duplicate_action_id")
+        state.used_action_ids.add(action_id)
+        state.actions += 1
+        max_actions = self._decision.execution_limits.max_actions
+        if max_actions is not None and state.actions > max_actions:
+            msg = f"execution exceeded max_actions={max_actions}"
+            raise state.fail(ExecutionFailedError(msg, execution_id=eid), "max_actions_exceeded")
+        try:
+            return digest(fingerprint, floats="repr")
+        except TypeError as error:
+            msg = f"fingerprint of record {action_id!r} cannot be canonicalized: {error}"
+            raise state.fail(
+                ExecutionError(msg, execution_id=eid), "invalid_record_fingerprint"
+            ) from error
 
     def _precheck(self, capability: str, action_id: str, params: Mapping[str, object]) -> str:
         state, eid = self._state, self._eid
