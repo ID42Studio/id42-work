@@ -9,6 +9,14 @@ the public API; breaking changes are listed explicitly.
 
 ### Added
 
+- AI agents: `id42_work.agents` describes granted capabilities as model tools, and
+  `id42_work.integrations.pydantic_ai` (extra `pydantic-ai`) gives PydanticAI agents a
+  `capability_toolset` and a `RecordedModel` that journals model responses. A resumed
+  agent replays its recorded turns, reaches the action that waited for approval and
+  continues. See `docs/agents.md` and `examples/agent_invoice.py`.
+- `context.record(action_id, fingerprint=, compute=)` journals any non-deterministic
+  computation and replays it on resume. `context.capability_specs` exposes the granted
+  capabilities' specs, and `CapabilitySpec.params_schema` describes their arguments.
 - `SqliteStorage` persists executions, journals, approvals, events, evidence, inputs
   and idempotency reservations in one SQLite file. It uses the standard library only
   and passes the storage contract. The schema is versioned and migrated on open.
@@ -25,6 +33,17 @@ the public API; breaking changes are listed explicitly.
   lease. A SQLite file from the previous slice migrates to schema version 2 on open.
 - `examples/sqlite_resume.py` reopens a database, keeps an approval bound to its
   digest, and resumes. `examples/postgres_resume.py` does the same on PostgreSQL.
+
+### Changed
+
+- The `id42.` capability namespace is reserved. `max_actions` counts `context.record`
+  calls too.
+
+### Fixed
+
+- An executor that runs tasks in a task group and hits an approval gate now suspends
+  the execution. Before, the exception group escaped `run()` and left the execution
+  `RUNNING`.
 
 ### Documentation
 

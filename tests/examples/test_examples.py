@@ -13,6 +13,7 @@ NAMES = sorted(p.name for p in EXAMPLES.glob("*.py") if not p.name.startswith("_
 
 def test_all_specified_examples_exist() -> None:
     assert NAMES == [
+        "agent_invoice.py",
         "async_execution.py",
         "fake_odoo_invoice.py",
         "hello_work.py",

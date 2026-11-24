@@ -29,8 +29,10 @@ Still open:
 
 ## v0.3: framework integrations
 
-- Adapters for LangGraph, PydanticAI and other agent runtimes, wrapping agent tool
-  calls as `context.invoke`.
+- Done: PydanticAI (`id42_work.integrations.pydantic_ai`) and the framework-neutral
+  layer `id42_work.agents`, with model calls journaled by `context.record`.
+- Next: LangGraph / LangChain (tools plus a journaled chat model), then an MCP server
+  that exposes granted capabilities to MCP clients.
 - OpenTelemetry integration (`id42-work[otel]`): the spans and attributes of specification
   12, built on the event dispatcher. Not part of 0.1.0.
 

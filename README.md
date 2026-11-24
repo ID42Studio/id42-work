@@ -47,6 +47,9 @@ or, with [uv](https://docs.astral.sh/uv/), for development:
 uv sync --all-extras --dev
 ```
 
+Optional extras: `postgres` (PostgreSQL storage) and `pydantic-ai` (AI agents), for
+example `pip install ".[pydantic-ai]"`.
+
 Once published, it will be installable with `pip install id42-work`.
 
 ## Minimal example
@@ -210,6 +213,33 @@ every registered validator. A validator that raises counts as a failure. If a re
 validator fails, the execution ends `VALIDATION_FAILED`: it never reaches `COMPLETED`.
 See [examples/invoice_validation.py](examples/invoice_validation.py).
 
+## AI agents
+
+An agent is an executor whose next step a model chooses. With the PydanticAI
+integration, the agent's tools are exactly the capabilities the execution was granted,
+and every tool call goes through the same policy, approval gates and journal. Model
+responses are journaled too: when an execution resumes after an approval, the agent
+replays its recorded turns instead of asking the model again, so it reaches the
+approved action with the same parameters and continues.
+
+```python
+from pydantic_ai import Agent
+from id42_work.integrations.pydantic_ai import RecordedModel, capability_toolset
+
+
+class BillAgent:
+    async def execute(self, input_data: BillRequest, context: ExecutionContext) -> BillResult:
+        agent = Agent(
+            RecordedModel("anthropic:claude-sonnet-5-5", context),
+            toolsets=[capability_toolset(context)],
+            output_type=BillResult,
+        )
+        return (await agent.run(f"Post bill {input_data.invoice_number}.")).output
+```
+
+See [docs/agents.md](docs/agents.md) and the offline example
+[examples/agent_invoice.py](examples/agent_invoice.py).
+
 ## Architecture overview
 
 ```text
@@ -243,9 +273,9 @@ Details, module map and every deviation from the specification are in
 
 ## Roadmap
 
-No dates are committed. SQLite, PostgreSQL and cross-process resume claims are in
-the tree. Still open: recovering a crash during `VALIDATING`, reconciliation
-tooling, framework adapters (LangGraph, PydanticAI), an Odoo 18 connector package,
+No dates are committed. SQLite, PostgreSQL, cross-process resume claims and the
+PydanticAI agent integration are in the tree. Still open: recovering a crash during `VALIDATING`, reconciliation
+tooling, more agent adapters (LangGraph, MCP), an Odoo 18 connector package,
 and workflow composition. See [docs/roadmap.md](docs/roadmap.md).
 
 ## Contributing

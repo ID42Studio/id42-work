@@ -47,3 +47,12 @@ A provider that cannot tell whether an external side effect happened must raise
 treated the same way. The action becomes `UNCERTAIN` and the execution `FAILED` with
 `requires_reconciliation=True`. The SDK never retries: reconcile with the external
 system using the operation id.
+
+## Recorded computations
+
+`context.record(action_id, fingerprint=..., compute=...)` journals the result of a
+non-deterministic computation that is not a capability, such as a model call. It is
+replayed like a `SUCCEEDED` action: same `action_id` and an equal fingerprint return
+the stored result; a different fingerprint fails the execution as
+`non_deterministic`. Its entries use the reserved marker `id42.record`. See
+[AI agents](../agents.md).

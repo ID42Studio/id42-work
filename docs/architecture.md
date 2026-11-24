@@ -32,6 +32,8 @@ specification requires (section 5 and 26).
 | `id42_work.storage.postgres` | `PostgresStorage` (optional `psycopg`): the same repositories and a session resume lock |
 | `id42_work.storage.claims` | Shared checks for a resume claim (internal) |
 | `id42_work.storage.codec` | JSON round-trip for records, inputs and outcome models (internal) |
+| `id42_work.agents` | Framework-neutral agent tools: `agent_tools`, `tool_action_id`, `to_params`, `call_tool` |
+| `id42_work.integrations.pydantic_ai` | `capability_toolset`, `capability_tools`, `RecordedModel` (extra `pydantic-ai`) |
 | `id42_work.testing` | `FakeOdooProvider`, `ManualClock`; `testing.contract.StorageContractSuite` (needs pytest) |
 | `id42_work.execution` | `Execution`, `ExecutionErrorInfo` |
 | `id42_work.approvals` | `Approval`, `ApprovalStatus`, `compute_action_digest` |
@@ -115,6 +117,10 @@ inconsistent record:
 | D41 | 12.2: an execution update and an event append are separate atomic operations | `Storage.commit_execution` stores the execution and appends its event, both or neither. `last_event_sequence` is the sequence that was appended. A sequence race retries; a lost revision does not. | Reading the sequence, then writing the execution, then appending the event could record a sequence the event did not get. |
 | D42 | 12.3: no durable persistence in 0.1.0 | `SqliteStorage` and `PostgresStorage` persist executions, journals, approvals, events, evidence, inputs and idempotency reservations, with optimistic concurrency and a versioned schema migrated on open. PostgreSQL is the `postgres` extra (`psycopg` 3). `MemoryStorage` is unchanged. Nothing beyond Pydantic is required. | Hosts need crash recovery. SQLite stays free of extra dependencies; PostgreSQL is opt-in and passes `StorageContractSuite`. |
 | D43 | 5.8 and 8.3: `resume` continues a suspended execution | `resume` also recovers a `RUNNING` execution left by a dead process. `IN_FLIGHT` journal entries become `UNCERTAIN` and the execution `FAILED` with `requires_reconciliation`; the provider is not called. With no `IN_FLIGHT` entry, the executor is replayed. A policy denial from `RUNNING` ends `FAILED` (`policy_denied_on_resume`), because the transition table has no `RUNNING -> DENIED`. | The suspended coroutine is gone. The journal is what survived. `READY -> DENIED` is unchanged. A crash during `VALIDATING` is still not recovered: the output was not stored, and there is no `VALIDATING -> VALIDATING` edge to run validation again. |
+| D44 | 5.6: the executor context exposes `invoke` and `add_evidence` | Added `context.record(action_id, fingerprint=, compute=)` and `context.capability_specs` (granted capabilities only). `CapabilitySpec` gains an optional `params_schema`. | Agents need non-deterministic model calls journaled to stay replayable (spec 5.2 asks for it), and tools need descriptions and argument schemas. |
+| D45 | 8.1: every journal entry names a granted capability | `record` entries use the reserved marker `id42.record`; providers cannot declare capabilities under `id42.` | Records are not grantable and must never collide with a real capability. |
+| D46 | 5.6: `max_actions` counts `context.invoke` calls | It also counts `context.record` calls | Model calls are what makes an agent run long; the limit must bound them. |
+| D47 | 5.2: executors must not catch `BaseException` | An exception group that holds the suspension signal (an executor using a task group) suspends the execution; any other non-`Exception` group fails it, except `KeyboardInterrupt` and `SystemExit` | Without this, a group escaped `run()` and left the execution `RUNNING`. |
 
 The M3 note on expiry is resolved: an expired PENDING approval cancels its execution
 (reason `approval_expired`), as specification 7.5 requires. An expired GRANTED approval
