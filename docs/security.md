@@ -108,7 +108,10 @@ journals and events disappear when that process exits.
 `SqliteStorage` writes the same records to a file. `PostgresStorage` writes them to
 PostgreSQL. After a restart, `resume` replays completed actions. A capability call
 left `IN_FLIGHT` is marked `UNCERTAIN` and is not retried. A `context.record` left
-`IN_FLIGHT` is computed again, because its result was never returned. A resume claim
+`IN_FLIGHT` during a `RUNNING` execution is computed again, because its result was
+never returned. An execution left in `VALIDATING` is recovered without calling the
+provider again: the output is rebuilt from the journal, a stored record is replayed,
+and a new side effect or a missing record is refused. A resume claim
 stops a second live process from driving the same execution: a SQLite lease row, or
 a PostgreSQL session advisory lock that ends when the connection closes. There is
 no distributed transaction with the external system. The database is trusted host

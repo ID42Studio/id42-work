@@ -25,6 +25,7 @@ from id42_work.evidence.models import Evidence, EvidenceType
 from id42_work.exceptions import ConcurrentModificationError, StorageError
 from id42_work.execution import Execution
 from id42_work.journal import JournalEntry, JournalStatus, operation_id
+from id42_work.outcomes.models import Outcome, Severity, ValidationResult
 from id42_work.policy.models import ApprovalGate
 from id42_work.state_machine import transition_approval, transition_execution
 from id42_work.states import ExecutionStatus
@@ -364,3 +365,92 @@ class StorageContractSuite(ABC):
         assert await store.get(f"{reference}-missing") is None
         with pytest.raises(StorageError):
             await store.put(eid, payload)
+
+    # ------------------------------------------------------------------ recovery
+
+    @pytest.mark.asyncio
+    async def test_resume_claim_is_exclusive(self) -> None:
+        storage = self.make_storage()
+        execution_id = uuid4()
+        ttl = timedelta(seconds=30)
+        assert await storage.claim_resume(execution_id, "owner-a", now=_T0, ttl=ttl)
+        assert not await storage.claim_resume(execution_id, "owner-b", now=_T0, ttl=ttl)
+        await storage.release_resume(execution_id, "owner-b")
+        assert not await storage.claim_resume(execution_id, "owner-b", now=_T0, ttl=ttl)
+        await storage.release_resume(execution_id, "owner-a")
+        assert await storage.claim_resume(execution_id, "owner-b", now=_T0, ttl=ttl)
+
+    @pytest.mark.asyncio
+    async def test_validating_commit_is_atomic_and_keeps_the_journal(self) -> None:
+        """The recovery transition and its event commit together; the journal stays."""
+        storage = self.make_storage()
+        execution = _execution()
+        await storage.executions.create(execution)
+        current = execution
+        for status in (
+            ExecutionStatus.POLICY_CHECK,
+            ExecutionStatus.READY,
+            ExecutionStatus.RUNNING,
+            ExecutionStatus.VALIDATING,
+        ):
+            current = transition_execution(current, status, at=_T0)
+            await storage.executions.compare_and_set(current)
+        eid = current.execution_id
+        done = JournalEntry(
+            execution_id=eid,
+            action_id="post",
+            capability="contract.read",
+            params_digest=_DIGEST,
+            operation_id=operation_id(eid, "post"),
+            status=JournalStatus.SUCCEEDED,
+            result={"ok": True},
+            result_digest=_DIGEST,
+            started_at=_T0,
+            finished_at=_T0,
+        )
+        await storage.executions.append_journal(done)
+        outcome = Outcome(
+            execution_id=eid,
+            output=_Payload(value="x"),
+            verified=True,
+            validation_results=(
+                ValidationResult(
+                    validator_id="schema",
+                    passed=True,
+                    severity=Severity.INFO,
+                    message="ok",
+                ),
+            ),
+            produced_at=_T0,
+            accepted_at=_T0,
+        )
+        completed = transition_execution(
+            current,
+            ExecutionStatus.COMPLETED,
+            at=_T0,
+            outcome=outcome,
+            last_event_sequence=1,
+        )
+        await storage.commit_execution(
+            completed,
+            _event(eid, 1).model_copy(update={"event_type": EventType.EXECUTION_COMPLETED}),
+        )
+        assert await storage.executions.get(eid) == completed
+        assert await storage.executions.list_journal(eid) == (done,)
+        assert await storage.events.last_sequence(eid) == 1
+
+        stale = transition_execution(
+            current,
+            ExecutionStatus.VALIDATION_FAILED,
+            at=_T0,
+            reason="validation_failed",
+            last_event_sequence=2,
+        )
+        with pytest.raises(ConcurrentModificationError):
+            await storage.commit_execution(
+                stale,
+                _event(eid, 2).model_copy(update={"event_type": EventType.VALIDATION_FAILED}),
+            )
+        assert await storage.executions.get(eid) == completed
+        assert await storage.events.last_sequence(eid) == 1
+        assert await storage.executions.list_journal(eid) == (done,)

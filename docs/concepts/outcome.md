@@ -21,6 +21,10 @@ A validator is any object with `validator_id`, `required` and
   from its start. A validator still running at the deadline counts as a failed check
   with the message `validator timed out (execution_limits.timeout)`.
 - `context.invoke` gives validators read-only capabilities only.
+- Validators must be idempotent. If the process stops during validation, `resume`
+  runs them again. A read-only call may reach the provider a second time, because
+  those calls are not journaled. A side effect that already completed is not
+  repeated.
 
 `outcome.verified` is derived, not declared: it is true when every required result
 passed. Three facts are kept apart:
