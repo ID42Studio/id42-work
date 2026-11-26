@@ -9,6 +9,14 @@ the public API; breaking changes are listed explicitly.
 
 ### Added
 
+- AI agents: `id42_work.agents` describes granted capabilities as model tools, and
+  `id42_work.integrations.pydantic_ai` (extra `pydantic-ai`) gives PydanticAI agents a
+  `capability_toolset` and a `RecordedModel` that journals model responses. A resumed
+  agent replays its recorded turns, reaches the action that waited for approval and
+  continues. See `docs/agents.md` and `examples/agent_invoice.py`.
+- `context.record(action_id, fingerprint=, compute=)` journals any non-deterministic
+  computation and replays it on resume. `context.capability_specs` exposes the granted
+  capabilities' specs, and `CapabilitySpec.params_schema` describes their arguments.
 - `SqliteStorage` persists executions, journals, approvals, events, evidence, inputs
   and idempotency reservations in one SQLite file. It uses the standard library only
   and passes the storage contract. The schema is versioned and migrated on open.
@@ -16,8 +24,9 @@ the public API; breaking changes are listed explicitly.
   PostgreSQL and passes the same contract. The schema is migrated on open. The driver
   stays optional: importing the package does not require it.
 - `resume` recovers a `RUNNING` execution after the process stops. Completed actions
-  are replayed. An action left `IN_FLIGHT` becomes `UNCERTAIN`, and the execution
-  ends `FAILED` with `requires_reconciliation`, without calling the provider again.
+  are replayed. A capability call left `IN_FLIGHT` becomes `UNCERTAIN`, and the
+  execution ends `FAILED` with `requires_reconciliation`, without calling the provider
+  again. A `context.record` left `IN_FLIGHT` is computed again.
 - A resume claim stops two processes from driving the same execution. SQLite stores a
   lease (owner, pid, expiry) inside `BEGIN IMMEDIATE` and takes over a dead pid at
   once. PostgreSQL holds a session advisory lock until the connection closes.
@@ -25,6 +34,32 @@ the public API; breaking changes are listed explicitly.
   lease. A SQLite file from the previous slice migrates to schema version 2 on open.
 - `examples/sqlite_resume.py` reopens a database, keeps an approval bound to its
   digest, and resumes. `examples/postgres_resume.py` does the same on PostgreSQL.
+
+### Changed
+
+- The `id42.` capability namespace is reserved. `max_actions` counts `context.record`
+  calls too.
+
+### Fixed
+
+- An executor that runs tasks in a task group and hits an approval gate now suspends
+  the execution. Before, the exception group escaped `run()` and left the execution
+  `RUNNING`. A group that also carries another error fails the execution instead of
+  hiding that error behind the suspension. A group of only cancellation cancels the
+  execution. An uncertain side effect is reconciled before the execution can wait
+  for approval.
+- A `context.record` left `IN_FLIGHT` by a crash is computed again. One whose
+  fingerprint changed, or that shares its action id with a capability call, fails as
+  non-deterministic. One left `UNCERTAIN` is not recomputed. A record whose
+  computation hits an approval gate stays `IN_FLIGHT`, so resume can consume the
+  grant. A read cancelled because a sibling task hit that gate is run again; a
+  side-effecting call is not.
+- `RecordedModel` treats a change of model id, sampling settings, tool schema,
+  thinking signature or provider payload as a different conversation. A journaled
+  model response that fails validation reports the location and the reason, not the
+  payload.
+- `context.capability_specs` hands out copies of the granted specs, so changing a
+  schema on the context does not change the registry.
 
 ### Documentation
 

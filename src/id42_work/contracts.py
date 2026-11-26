@@ -5,7 +5,7 @@ satisfy these protocols structurally; they never subclass SDK types.
 """
 
 import logging
-from collections.abc import Iterable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from typing import Protocol, TypeVar
 from uuid import UUID
 
@@ -48,6 +48,11 @@ class ExecutionContext(Protocol):
     def granted_capabilities(self) -> frozenset[str]: ...
 
     @property
+    def capability_specs(self) -> Mapping[str, CapabilitySpec]:
+        """Copies of the granted capabilities' specs (descriptions, parameter schemas)."""
+        ...
+
+    @property
     def logger(self) -> logging.Logger: ...
 
     async def invoke(
@@ -58,6 +63,25 @@ class ExecutionContext(Protocol):
         ``action_id`` must be unique within one executor run and stable across
         replays. ``params`` must be canonicalizable (no floats). Results are
         JSON-compatible values and are replayed from the journal on resume.
+        """
+        ...
+
+    async def record(
+        self,
+        action_id: str,
+        *,
+        fingerprint: object,
+        compute: Callable[[], Awaitable[JsonValue]],
+    ) -> JsonValue:
+        """Journal the JSON result of a non-deterministic computation, such as a model call.
+
+        The first run awaits ``compute()`` and stores its result. A replay with the same
+        ``action_id`` and an equal ``fingerprint`` returns the stored result without
+        calling ``compute``. A different fingerprint, or an entry that is not this
+        record, fails the execution as non-deterministic. An entry left ``IN_FLIGHT``
+        with the same fingerprint is computed again. ``fingerprint`` must be
+        canonicalizable (floats are allowed). No grant is needed: ``record`` reaches
+        nothing outside the executor by itself.
         """
         ...
 

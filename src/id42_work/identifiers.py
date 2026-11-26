@@ -64,3 +64,10 @@ def resume_grant(work_id: str) -> str:
 def cancel_grant(work_id: str) -> str:
     """Grant that allows cancelling executions of ``work_id`` started by another actor."""
     return f"cancel:{work_id}"
+
+
+RESERVED_CAPABILITY_PREFIX = "id42."
+"""Namespace reserved for the SDK. Providers cannot declare capabilities in it."""
+
+RECORD_CAPABILITY = "id42.record"
+"""Journal marker for ``context.record`` entries. It is not a grantable capability."""

@@ -56,6 +56,25 @@ The SDK defends against:
 - **Quiet by default.** The `id42_work` logger has a `NullHandler`: the library logs
   nothing unless the application configures logging.
 
+## AI agents
+
+- **Tools are only granted capabilities.** `capability_toolset` builds tools from the
+  execution's granted capabilities. Asking for any other capability raises before the
+  agent runs, and every tool call is checked again by `context.invoke`.
+- **Approval binds to what the model asked for.** A gated tool call is approved with
+  its exact parameters. If the model asks for something else on replay, the old
+  approval no longer applies.
+- **Prompt injection stays inside the grant.** Text the agent reads (inputs, tool
+  results, documents) can steer the model, but not past the policy: the model can only
+  call granted tools, and gated tools still wait for a person.
+- **Not a sandbox.** An agent is only constrained if the executor gives it nothing
+  else. Do not hand an agent HTTP clients, database handles or other tools that bypass
+  `context.invoke`.
+- **The journal holds model responses.** `RecordedModel` stores each response so it
+  can be replayed. In durable storage, they are kept like any other action result.
+- **`context.record` needs no grant.** By itself it reaches nothing outside the
+  executor: it only stores what the executor's own code computed.
+
 ## Limitations
 
 **In-process trust.** The SDK cannot sandbox Python. Code running in the same process
@@ -73,7 +92,9 @@ a request and before the SDK recorded it. The SDK therefore:
   key);
 - marks interrupted or ambiguous side effects `UNCERTAIN`, with
   `requires_reconciliation=True`;
-- never retries automatically, whether the effect is financial or not.
+- never retries a side effect automatically, whether the effect is financial or not.
+  A read that was cancelled because a sibling task hit an approval gate is run
+  again on resume; a side-effecting call in that situation stays `UNCERTAIN`.
 
 Treat at-least-once delivery and uncertain outcomes as normal cases in integrations.
 
@@ -85,8 +106,9 @@ action is detected and fails the execution.
 journals and events disappear when that process exits.
 
 `SqliteStorage` writes the same records to a file. `PostgresStorage` writes them to
-PostgreSQL. After a restart, `resume` replays completed actions and marks an
-`IN_FLIGHT` action `UNCERTAIN` instead of calling the provider again. A resume claim
+PostgreSQL. After a restart, `resume` replays completed actions. A capability call
+left `IN_FLIGHT` is marked `UNCERTAIN` and is not retried. A `context.record` left
+`IN_FLIGHT` is computed again, because its result was never returned. A resume claim
 stops a second live process from driving the same execution: a SQLite lease row, or
 a PostgreSQL session advisory lock that ends when the connection closes. There is
 no distributed transaction with the external system. The database is trusted host

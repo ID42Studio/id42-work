@@ -21,6 +21,7 @@ import os
 import threading
 from collections.abc import AsyncGenerator, Generator, Iterable, Mapping
 from datetime import datetime, timedelta
+from typing import cast
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, JsonValue, TypeAdapter, ValidationError
@@ -47,6 +48,7 @@ from id42_work.evidence.models import Evidence, EvidenceType
 from id42_work.exceptions import (
     ConcurrentModificationError,
     ExecutionError,
+    ExecutionFailedError,
     IdempotencyConflictError,
     InputValidationError,
     PolicyDeniedError,
@@ -55,7 +57,7 @@ from id42_work.exceptions import (
     WorkDefinitionError,
 )
 from id42_work.execution import Execution
-from id42_work.identifiers import cancel_grant, resume_grant
+from id42_work.identifiers import RECORD_CAPABILITY, cancel_grant, resume_grant
 from id42_work.journal import JournalEntry, JournalStatus
 from id42_work.outcomes.models import Outcome, Severity, ValidationResult
 from id42_work.outcomes.validators import validate_output_schema
@@ -311,10 +313,12 @@ class WorkRunner:
         is evaluated again with the current policy and the resuming actor's grants.
 
         A ``RUNNING`` execution means the previous process stopped while driving it.
-        Actions left ``IN_FLIGHT`` become ``UNCERTAIN`` and the execution ends ``FAILED``
-        with ``requires_reconciliation``; they are not retried. With no ``IN_FLIGHT``
-        action, the executor is replayed from the start. A second call does not drive
-        the execution when this process, or another process, already holds the claim.
+        A capability call left ``IN_FLIGHT`` becomes ``UNCERTAIN`` and the execution
+        ends ``FAILED`` with ``requires_reconciliation``; it is not retried. A
+        ``context.record`` left ``IN_FLIGHT`` is computed again: its result was never
+        returned, and capability calls it already completed are replayed. A second call
+        does not drive the execution when this process, or another process, already
+        holds the claim.
 
         ``actor`` must be the execution's actor (same tenant) or hold
         ``resume:<work_id>`` in the same tenant. Any other state is returned unchanged.
@@ -511,7 +515,11 @@ class WorkRunner:
             if not claimed:
                 return execution
             journal = await self._rec.storage.executions.list_journal(execution.execution_id)
-            in_flight = [entry for entry in journal if entry.status is JournalStatus.IN_FLIGHT]
+            in_flight = [
+                entry
+                for entry in journal
+                if entry.status is JournalStatus.IN_FLIGHT and entry.capability != RECORD_CAPABILITY
+            ]
             if in_flight:
                 await self._rec.emit(
                     execution,
@@ -580,7 +588,7 @@ class WorkRunner:
 
         ``already_running`` skips the start gate and the transition into ``RUNNING``.
         The execution is already there because a previous process stopped after that
-        transition and left no ``IN_FLIGHT`` action.
+        transition and left no in-flight capability call.
         """
         if not already_running:
             start_gate = decision.gate_for(ApprovalGate.START)
@@ -608,6 +616,7 @@ class WorkRunner:
                 extra_changes=first_changes,
             )
         state = RunState()
+        invoker = ActionInvoker(self._rec, execution, decision, state)
         context = RunContext(
             execution_id=execution.execution_id,
             work_id=execution.work_id,
@@ -615,8 +624,10 @@ class WorkRunner:
             actor_id=execution.actor_id,
             tenant_id=execution.tenant_id,
             granted_capabilities=decision.granted_capabilities,
-            invoke=ActionInvoker(self._rec, execution, decision, state),
+            invoke=invoker,
             new_evidence_id=uuid4,
+            record=invoker.record,
+            capability_specs=self._rec.capabilities.specs,
         )
         output: object = None
         failure: BaseException | None = None
@@ -625,7 +636,7 @@ class WorkRunner:
         timeout_cm = asyncio.timeout(limit.total_seconds() if limit else None)
         try:
             async with timeout_cm:
-                output = await binding.executor.execute(validated, context)
+                output = await _execute(binding, validated, context)
         except ExecutionSuspended:
             state.suspended = True
         except TimeoutError as error:
@@ -648,7 +659,7 @@ class WorkRunner:
             return await self._rec.fail(
                 execution, state.violation, state.violation_reason, reconcile=state.reconcile
             )
-        if state.suspended:
+        if state.suspended and not state.reconcile:
             return await self._rec.transition(
                 execution,
                 S.WAITING_APPROVAL,
@@ -664,6 +675,14 @@ class WorkRunner:
                 failure,
                 failure_reason,
                 reconcile=state.reconcile or state.side_effect_in_flight,
+            )
+        if state.reconcile:
+            msg = "an action has an uncertain outcome; reconciliation required"
+            return await self._rec.fail(
+                execution,
+                UncertainOutcomeError(msg, execution_id=execution.execution_id),
+                "uncertain_outcome",
+                reconcile=True,
             )
         return await self._validate(execution, binding, validated, decision, output)
 
@@ -834,6 +853,48 @@ async def _release_reservation(
             extra={"execution.id": str(execution_id)},
             exc_info=True,
         )
+
+
+async def _execute(binding: WorkBinding, validated: BaseModel, context: RunContext) -> object:
+    """Run the executor, normalizing exception groups from executors that use task groups.
+
+    ``KeyboardInterrupt`` and ``SystemExit`` propagate. A group that contains only an
+    approval suspension, or a suspension plus cancellation of its siblings, becomes
+    the suspension. A group of only cancellation becomes ``CancelledError``. A group
+    of ordinary errors is re-raised as is. A group that mixes a suspension with any
+    other error fails the execution, so the other error is not discarded.
+    """
+    try:
+        return await binding.executor.execute(validated, context)
+    except BaseExceptionGroup as group:
+        if group.subgroup((KeyboardInterrupt, SystemExit)) is not None:
+            raise
+        if _other_errors(group):
+            if isinstance(group, Exception):
+                raise
+            msg = "the executor's task group was interrupted"
+            raise ExecutionFailedError(msg) from group
+        if group.subgroup(ExecutionSuspended) is not None:
+            raise ExecutionSuspended from group
+        raise asyncio.CancelledError() from group
+
+
+def _other_errors(group: BaseExceptionGroup[BaseException]) -> list[BaseException]:
+    """Exceptions in ``group`` other than an approval suspension or a cancellation.
+
+    Nested groups are flattened, matching ``BaseExceptionGroup.exclude``.
+    """
+    kept: list[BaseException] = []
+    members = cast("tuple[BaseException, ...]", group.exceptions)
+    for exc in members:
+        if isinstance(exc, (ExecutionSuspended, asyncio.CancelledError)):
+            continue
+        if isinstance(exc, BaseExceptionGroup):
+            nested = cast("BaseExceptionGroup[BaseException]", exc)
+            kept.extend(_other_errors(nested))
+            continue
+        kept.append(exc)
+    return kept
 
 
 def _check_operator(actor: TrustedActor, execution: Execution, grant: str, operation: str) -> None:

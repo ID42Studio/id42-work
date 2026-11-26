@@ -1,6 +1,6 @@
 """Serializable descriptions of errors and their cause chains."""
 
-from typing import Self
+from typing import Self, cast
 
 from pydantic import ValidationError
 
@@ -30,11 +30,22 @@ class ExecutionErrorInfo(FrozenModel):
         """Describe ``error`` and its ``__cause__`` / ``__context__`` chain."""
         causes: list[ErrorCause] = []
         seen: set[int] = {id(error)}
-        current = error.__cause__ or error.__context__
-        while current is not None and id(current) not in seen and len(causes) < _MAX_CAUSES:
+        pending: list[BaseException] = []
+        first = error.__cause__ or error.__context__
+        if first is not None:
+            pending.append(first)
+        while pending and len(causes) < _MAX_CAUSES:
+            current = pending.pop(0)
+            if id(current) in seen:
+                continue
             seen.add(id(current))
             causes.append(ErrorCause(type=type(current).__name__, message=str(current)))
-            current = current.__cause__ or current.__context__
+            if isinstance(current, BaseExceptionGroup):
+                grouped = cast("BaseExceptionGroup[BaseException]", current)
+                pending = [*grouped.exceptions, *pending]
+            nxt = current.__cause__ or current.__context__
+            if nxt is not None:
+                pending.append(nxt)
         return cls(
             type=type(error).__name__,
             message=str(error),

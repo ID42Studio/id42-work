@@ -173,6 +173,8 @@ async def test_executor_context_exposes_no_approval_or_storage_handles() -> None
             "granted_capabilities",
             "logger",
             "invoke",
+            "record",
+            "capability_specs",
             "add_evidence",
             "drain_evidence",
         }

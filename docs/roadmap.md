@@ -14,8 +14,9 @@ Done:
 - Approvals, journals, events, evidence, inputs and idempotency reservations survive
   the process.
 - Crash recovery through replay. `resume` of a `RUNNING` execution left by a dead
-  process replays `SUCCEEDED` actions. Actions left `IN_FLIGHT` become `UNCERTAIN`
-  and the execution ends `FAILED` with `requires_reconciliation`.
+  process replays `SUCCEEDED` actions. Capability calls left `IN_FLIGHT` become
+  `UNCERTAIN` and the execution ends `FAILED` with `requires_reconciliation`. A
+  `context.record` left `IN_FLIGHT` is computed again.
 - A resume claim is visible across processes. SQLite stores a lease (owner, pid,
   expiry) inside `BEGIN IMMEDIATE`. PostgreSQL holds a session advisory lock, which
   ends when the connection closes.
@@ -29,8 +30,10 @@ Still open:
 
 ## v0.3: framework integrations
 
-- Adapters for LangGraph, PydanticAI and other agent runtimes, wrapping agent tool
-  calls as `context.invoke`.
+- Done: PydanticAI (`id42_work.integrations.pydantic_ai`) and the framework-neutral
+  layer `id42_work.agents`, with model calls journaled by `context.record`.
+- Next: LangGraph / LangChain (tools plus a journaled chat model), then an MCP server
+  that exposes granted capabilities to MCP clients.
 - OpenTelemetry integration (`id42-work[otel]`): the spans and attributes of specification
   12, built on the event dispatcher. Not part of 0.1.0.
 
