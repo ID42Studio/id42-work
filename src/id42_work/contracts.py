@@ -79,9 +79,11 @@ class ExecutionContext(Protocol):
         ``action_id`` and an equal ``fingerprint`` returns the stored result without
         calling ``compute``. A different fingerprint, or an entry that is not this
         record, fails the execution as non-deterministic. An entry left ``IN_FLIGHT``
-        with the same fingerprint is computed again. ``fingerprint`` must be
-        canonicalizable (floats are allowed). No grant is needed: ``record`` reaches
-        nothing outside the executor by itself.
+        with the same fingerprint is computed again. Validation recovery does not:
+        it replays a stored result and fails closed, without calling ``compute``, when
+        that result is missing. ``fingerprint`` must be canonicalizable (floats are
+        allowed). No grant is needed: ``record`` reaches nothing outside the executor
+        by itself.
         """
         ...
 
@@ -136,7 +138,13 @@ class Executor(Protocol[InputT_contra, OutputT_co]):
 
 
 class Validator(Protocol):
-    """Checks an output. Exceptions raised by a validator count as a failed check."""
+    """Checks an output. Exceptions raised by a validator count as a failed check.
+
+    Validators must be idempotent. ``validate`` may run again when ``resume``
+    recovers an execution left in ``VALIDATING``, and ``context.invoke`` can call
+    only read-only capabilities. A second run must not depend on the first having
+    finished, and it must not cause an external side effect.
+    """
 
     @property
     def validator_id(self) -> str: ...

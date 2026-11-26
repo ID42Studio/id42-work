@@ -59,6 +59,12 @@ class ActionInvoker:
     canonicalization, journal replay, ACTION gate, provider call. Security violations
     are recorded in the run state, so an executor that catches the exception still
     ends ``FAILED``.
+
+    ``replay_only`` is validation recovery. The side effect already finished, so a
+    call that is not a completed or failed journal entry is refused and the provider
+    is not called. A ``context.record`` is returned from its stored result. A missing
+    record, a different fingerprint, or a record with no stored result is refused
+    and ``compute`` is not called.
     """
 
     def __init__(
@@ -67,12 +73,15 @@ class ActionInvoker:
         execution: Execution,
         decision: PolicyDecision,
         state: RunState,
+        *,
+        replay_only: bool = False,
     ) -> None:
         self._rec = recorder
         self._execution = execution
         self._eid = execution.execution_id
         self._decision = decision
         self._state = state
+        self._replay_only = replay_only
 
     async def __call__(
         self, capability: str, action_id: str, params: Mapping[str, object]
@@ -91,6 +100,15 @@ class ActionInvoker:
             replayed = await self._replay(entry, capability, params_digest, payload)
             if replayed is not _NOT_REPLAYED:
                 return cast("JsonValue", replayed)
+        if self._replay_only:
+            msg = (
+                f"action {action_id!r} is not a completed journal entry; "
+                "validation recovery will not perform it"
+            )
+            raise self._state.fail(
+                NonDeterministicExecutionError(msg, execution_id=self._eid),
+                "non_deterministic",
+            )
         await self._apply_gate(capability, action_id, params, params_digest, entry)
         return await self._perform(
             capability, action_id, params, params_digest=params_digest, entry=entry, payload=payload
@@ -105,6 +123,10 @@ class ActionInvoker:
         ``IN_FLIGHT`` with the same fingerprint is computed again, because its result was
         never returned. Any other status, or a different fingerprint or capability, fails
         closed. A computation that suspends for approval leaves the entry ``IN_FLIGHT``.
+
+        Validation recovery (``replay_only``) never calls ``compute``. A stored result is
+        replayed. A missing record, a different fingerprint, or a record that has no
+        stored result fails closed.
         """
         state, eid = self._state, self._eid
         fingerprint_digest = self._count(action_id, fingerprint)
@@ -117,25 +139,17 @@ class ActionInvoker:
             "operation_id": str(operation_id(eid, action_id)),
             "params_digest": fingerprint_digest,
         }
-        if entry is not None:
-            same = (
-                entry.capability == RECORD_CAPABILITY and entry.params_digest == fingerprint_digest
+        stored = await self._stored_record(entry, action_id, fingerprint_digest, payload)
+        if stored is not _NOT_REPLAYED:
+            return cast("JsonValue", stored)
+        if self._replay_only:
+            msg = (
+                f"record {action_id!r} has no stored result; "
+                "validation recovery will not compute it"
             )
-            if not same:
-                msg = f"replayed record {action_id!r} differs from the journal"
-                raise state.fail(
-                    NonDeterministicExecutionError(msg, execution_id=eid), "non_deterministic"
-                )
-            if entry.status is JournalStatus.SUCCEEDED:
-                await self._rec.emit(self._execution, EventType.ACTION_REPLAYED, payload)
-                return entry.result
-            if entry.status is JournalStatus.FAILED:
-                msg = f"replayed record {action_id!r} failed previously"
-                raise ExecutionFailedError(msg, execution_id=eid)
-            if entry.status is not JournalStatus.IN_FLIGHT:
-                state.reconcile = True
-                msg = f"record {action_id!r} has an uncertain outcome; reconciliation required"
-                raise state.fail(UncertainOutcomeError(msg, execution_id=eid), "uncertain_outcome")
+            raise state.fail(
+                NonDeterministicExecutionError(msg, execution_id=eid), "non_deterministic"
+            )
         started = self._rec.now()
         in_flight = journal_entry(
             eid,
@@ -187,6 +201,40 @@ class ActionInvoker:
             self._execution, EventType.ACTION_COMPLETED, {**payload, "result_digest": result_digest}
         )
         return result
+
+    async def _stored_record(
+        self,
+        entry: JournalEntry | None,
+        action_id: str,
+        fingerprint_digest: str,
+        payload: dict[str, JsonValue],
+    ) -> object:
+        """Replay a finished record, or ``_NOT_REPLAYED`` when it still has to run.
+
+        A different fingerprint fails closed. A previous failure is raised again. An
+        uncertain record fails closed. An ``IN_FLIGHT`` record, or no entry, is left
+        for the caller: a live run computes it, and validation recovery refuses it.
+        """
+        if entry is None:
+            return _NOT_REPLAYED
+        state, eid = self._state, self._eid
+        same = entry.capability == RECORD_CAPABILITY and entry.params_digest == fingerprint_digest
+        if not same:
+            msg = f"replayed record {action_id!r} differs from the journal"
+            raise state.fail(
+                NonDeterministicExecutionError(msg, execution_id=eid), "non_deterministic"
+            )
+        if entry.status is JournalStatus.SUCCEEDED:
+            await self._rec.emit(self._execution, EventType.ACTION_REPLAYED, payload)
+            return entry.result
+        if entry.status is JournalStatus.FAILED:
+            msg = f"replayed record {action_id!r} failed previously"
+            raise ExecutionFailedError(msg, execution_id=eid)
+        if entry.status is not JournalStatus.IN_FLIGHT:
+            state.reconcile = True
+            msg = f"record {action_id!r} has an uncertain outcome; reconciliation required"
+            raise state.fail(UncertainOutcomeError(msg, execution_id=eid), "uncertain_outcome")
+        return _NOT_REPLAYED
 
     def _count(self, action_id: str, fingerprint: object) -> str:
         """Checks shared by ``record``: suspension, id, uniqueness, limit, fingerprint."""

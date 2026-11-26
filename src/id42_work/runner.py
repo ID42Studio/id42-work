@@ -51,12 +51,13 @@ from id42_work.exceptions import (
     ExecutionFailedError,
     IdempotencyConflictError,
     InputValidationError,
+    NonDeterministicExecutionError,
     PolicyDeniedError,
     StorageError,
     UncertainOutcomeError,
     WorkDefinitionError,
 )
-from id42_work.execution import Execution
+from id42_work.execution import Execution, ExecutionErrorInfo
 from id42_work.identifiers import RECORD_CAPABILITY, cancel_grant, resume_grant
 from id42_work.journal import JournalEntry, JournalStatus
 from id42_work.outcomes.models import Outcome, Severity, ValidationResult
@@ -73,6 +74,23 @@ _MAX_REASON = 256
 _JSON = TypeAdapter(JsonValue)
 
 S = ExecutionStatus
+_UNSAFE_ON_VALIDATE = frozenset(
+    {JournalStatus.PENDING_APPROVAL, JournalStatus.IN_FLIGHT, JournalStatus.UNCERTAIN}
+)
+_UNCERTAIN_JOURNAL = frozenset({JournalStatus.IN_FLIGHT, JournalStatus.UNCERTAIN})
+
+
+class _ValidationFailure:
+    """A recovery attempt that already stored ``VALIDATION_FAILED``."""
+
+    __slots__ = ("execution",)
+
+    def __init__(self, execution: Execution) -> None:
+        self.execution = execution
+
+
+def _validating_resume_payload(actor_id: str) -> dict[str, JsonValue]:
+    return {"resumed_by": actor_id, "interrupted": True, "phase": "validating"}
 
 
 class WorkRunner:
@@ -306,7 +324,7 @@ class WorkRunner:
         actor: object,
         constraints: Iterable[str] | None = None,
     ) -> Execution:
-        """Continue a ``READY`` execution, or recover a ``RUNNING`` one after a restart.
+        """Continue a ``READY`` execution, or recover ``RUNNING`` or ``VALIDATING``.
 
         The executor runs again from the start: journaled actions are replayed, not
         repeated, and an action whose parameters changed needs a new approval. The policy
@@ -320,6 +338,20 @@ class WorkRunner:
         does not drive the execution when this process, or another process, already
         holds the claim.
 
+        A ``VALIDATING`` execution means the previous process stopped after the executor
+        returned, while validators were running. The output was not stored. Resume
+        replays the executor to rebuild it. A journaled capability call and a stored
+        ``context.record`` are returned from the journal; the provider is not called
+        again, and a record with no stored result is not computed again. Validators
+        then run again under ``execution_limits.timeout``. The execution is already
+        ``VALIDATING``, so resume does not enter that state again. A policy denial, an
+        unsafe journal entry, or a replay that is not a pure replay ends
+        ``VALIDATION_FAILED`` without calling the provider. An ``IN_FLIGHT`` capability
+        call is still marked ``UNCERTAIN``.
+
+        A second call does not drive the execution when this process, or another
+        process, already holds the claim.
+
         ``actor`` must be the execution's actor (same tenant) or hold
         ``resume:<work_id>`` in the same tenant. Any other state is returned unchanged.
 
@@ -327,7 +359,8 @@ class WorkRunner:
         ``ExecutionError`` (unknown execution), ``WorkDefinitionError`` (the definition
         was replaced) or ``StorageError``. A policy that denies a crashed ``RUNNING``
         execution fails it (``policy_denied_on_resume``) because ``RUNNING`` cannot
-        move to ``DENIED``.
+        move to ``DENIED``. The same denial of a crashed ``VALIDATING`` execution ends
+        ``VALIDATION_FAILED``, because that state cannot move to ``DENIED`` or ``FAILED``.
         """
         trusted = self._authority.verify(actor, now=self._rec.now())
         execution = await self._load(execution_id)
@@ -336,6 +369,8 @@ class WorkRunner:
         execution = await self._load(execution_id)
         if execution.status is S.RUNNING:
             return await self._resume_interrupted(execution, trusted, constraints)
+        if execution.status is S.VALIDATING:
+            return await self._resume_validating(execution, trusted, constraints)
         if execution.status is not S.READY:
             return execution
         binding, validated = await self._open_for_resume(execution)
@@ -574,6 +609,200 @@ class WorkRunner:
             )
             return await self._drive(current, binding, validated, decision, already_running=True)
 
+    async def _resume_validating(
+        self,
+        execution: Execution,
+        actor: TrustedActor,
+        constraints: Iterable[str] | None,
+    ) -> Execution:
+        """Recover a ``VALIDATING`` execution whose driver died during validators.
+
+        The side effect is already journaled. The executor is replayed only to rebuild
+        the output, then validators run again. There is no second transition into
+        ``VALIDATING``.
+        """
+        binding, validated = await self._open_for_resume(execution)
+        async with self._exclusive(execution.execution_id) as claimed:
+            if not claimed:
+                return execution
+            journal = await self._rec.storage.executions.list_journal(execution.execution_id)
+            blocked = [
+                entry
+                for entry in journal
+                if entry.status in _UNSAFE_ON_VALIDATE
+                and not (
+                    entry.status is JournalStatus.IN_FLIGHT
+                    and entry.capability == RECORD_CAPABILITY
+                )
+            ]
+            if blocked:
+                await self._rec.emit(
+                    execution,
+                    EventType.EXECUTION_RESUMED,
+                    _validating_resume_payload(actor.actor_id),
+                )
+                return await self._fail_blocked_validation(execution, blocked)
+            decision = self._engine.evaluate(
+                binding.work, actor, constraints=constraints, now=self._rec.now()
+            )
+            await self._rec.emit(
+                execution,
+                EventType.EXECUTION_RESUMED,
+                {**_validating_resume_payload(actor.actor_id), "allowed": decision.allowed},
+            )
+            if not decision.allowed:
+                msg = f"policy denied resuming execution {execution.execution_id}"
+                denied = execution.model_copy(
+                    update={
+                        "policy_reasons": decision.reasons,
+                        "granted_capabilities": frozenset[str](),
+                    }
+                )
+                return await self._close_validation(
+                    denied,
+                    PolicyDeniedError(
+                        msg, execution_id=execution.execution_id, reasons=decision.reasons
+                    ),
+                    "policy_denied_on_resume",
+                    reconcile=False,
+                    payload={"reasons": _json_list(decision.reasons)},
+                )
+            current = execution.model_copy(
+                update={
+                    "policy_id": decision.policy_id,
+                    "policy_version": decision.policy_version,
+                    "effective_autonomy": decision.effective_autonomy,
+                    "granted_capabilities": decision.granted_capabilities,
+                }
+            )
+            replayed = await self._replay_output(current, binding, validated, decision)
+            if isinstance(replayed, _ValidationFailure):
+                return replayed.execution
+            unfinished = [
+                entry.action_id
+                for entry in await self._rec.storage.executions.list_journal(execution.execution_id)
+                if entry.status is JournalStatus.IN_FLIGHT
+            ]
+            if unfinished:
+                names = ", ".join(repr(action_id) for action_id in unfinished)
+                msg = (
+                    f"records {names} have no stored result; "
+                    "validation recovery will not compute them"
+                )
+                return await self._close_validation(
+                    current,
+                    NonDeterministicExecutionError(msg, execution_id=execution.execution_id),
+                    "non_deterministic",
+                    reconcile=False,
+                )
+            return await self._finish_validation(current, binding, validated, decision, replayed)
+
+    async def _fail_blocked_validation(
+        self, execution: Execution, blocked: list[JournalEntry]
+    ) -> Execution:
+        """Fail closed when the journal is not safe to replay. Do not call a provider."""
+        for entry in blocked:
+            if entry.status is JournalStatus.IN_FLIGHT:
+                await self._rec.mark_action_uncertain(execution, entry)
+        reconcile = any(entry.status in _UNCERTAIN_JOURNAL for entry in blocked)
+        names = ", ".join(repr(entry.action_id) for entry in blocked)
+        if reconcile:
+            msg = f"actions {names} have an uncertain outcome; reconciliation required"
+            error: BaseException = UncertainOutcomeError(msg, execution_id=execution.execution_id)
+            reason = "uncertain_outcome"
+        else:
+            msg = f"actions {names} were not completed before validation"
+            error = NonDeterministicExecutionError(msg, execution_id=execution.execution_id)
+            reason = "non_deterministic"
+        return await self._close_validation(execution, error, reason, reconcile=reconcile)
+
+    async def _replay_output(
+        self,
+        execution: Execution,
+        binding: WorkBinding,
+        validated: BaseModel,
+        decision: PolicyDecision,
+    ) -> object:
+        """Replay the executor. Return the output, or a failure that was already stored.
+
+        The replay has its own ``execution_limits.timeout`` budget, separate from the
+        validation budget, the same split the first run uses. The provider is not
+        called.
+        """
+        state = RunState()
+        invoker = ActionInvoker(self._rec, execution, decision, state, replay_only=True)
+        context = RunContext(
+            execution_id=execution.execution_id,
+            work_id=execution.work_id,
+            work_version=execution.work_version,
+            actor_id=execution.actor_id,
+            tenant_id=execution.tenant_id,
+            granted_capabilities=decision.granted_capabilities,
+            invoke=invoker,
+            new_evidence_id=uuid4,
+            record=invoker.record,
+            capability_specs=self._rec.capabilities.specs,
+        )
+        limit = decision.execution_limits.timeout
+        timeout_cm = asyncio.timeout(limit.total_seconds() if limit else None)
+        output: object = None
+        failure: BaseException | None = None
+        try:
+            async with timeout_cm:
+                output = await _execute(binding, validated, context)
+        except Exception as error:  # noqa: BLE001 - replay errors fail the validation closed
+            failure = error
+        if state.violation is not None:
+            return _ValidationFailure(
+                await self._close_validation(
+                    execution,
+                    state.violation,
+                    state.violation_reason,
+                    reconcile=state.reconcile,
+                )
+            )
+        if failure is not None:
+            reason = "timeout" if timeout_cm.expired() else "executor_error"
+            return _ValidationFailure(
+                await self._close_validation(execution, failure, reason, reconcile=False)
+            )
+        return output
+
+    async def _close_validation(
+        self,
+        execution: Execution,
+        error: BaseException,
+        reason: str,
+        *,
+        reconcile: bool,
+        payload: dict[str, JsonValue] | None = None,
+    ) -> Execution:
+        """End validation as ``VALIDATION_FAILED`` together with its event.
+
+        ``VALIDATING`` cannot move to ``FAILED`` or ``DENIED``. The error is kept on
+        the record so ``requires_reconciliation`` stays visible.
+        """
+        info = ExecutionErrorInfo.from_exception(error, requires_reconciliation=reconcile)
+        _logger.warning(
+            "validation recovery failed closed",
+            extra={"execution.id": str(execution.execution_id), "reason": reason},
+        )
+        body: dict[str, JsonValue] = {
+            "verified": False,
+            "error_type": info.type,
+            "requires_reconciliation": reconcile,
+        }
+        if payload:
+            body.update(payload)
+        return await self._rec.transition(
+            execution,
+            S.VALIDATION_FAILED,
+            EventType.VALIDATION_FAILED,
+            body,
+            reason=reason,
+            error=info,
+        )
+
     async def _drive(
         self,
         execution: Execution,
@@ -697,6 +926,21 @@ class WorkRunner:
         execution = await self._rec.transition(
             execution, S.VALIDATING, EventType.VALIDATION_STARTED, {}
         )
+        return await self._finish_validation(execution, binding, validated, decision, output)
+
+    async def _finish_validation(
+        self,
+        execution: Execution,
+        binding: WorkBinding,
+        validated: BaseModel,
+        decision: PolicyDecision,
+        output: object,
+    ) -> Execution:
+        """Run validators and finish an execution that is already ``VALIDATING``.
+
+        Used for the first validation and for recovery. Recovery must not transition
+        into ``VALIDATING`` again: that edge does not exist.
+        """
         produced_at = self._rec.now()
         output_model, schema_result = validate_output_schema(output, binding.work.output_schema)
         results = [schema_result]
