@@ -116,11 +116,12 @@ inconsistent record:
 | D40 | 12.1: `IdempotencyRepository` is `reserve, get` | Added `release(scope, execution_id)`. It drops the reservation only when that execution still owns it. | A call that fails before the execution exists must not pin the key. A waiter never releases a reservation it does not own. An input stored for the failed attempt is left behind; nothing references it. |
 | D41 | 12.2: an execution update and an event append are separate atomic operations | `Storage.commit_execution` stores the execution and appends its event, both or neither. `last_event_sequence` is the sequence that was appended. A sequence race retries; a lost revision does not. | Reading the sequence, then writing the execution, then appending the event could record a sequence the event did not get. |
 | D42 | 12.3: no durable persistence in 0.1.0 | `SqliteStorage` and `PostgresStorage` persist executions, journals, approvals, events, evidence, inputs and idempotency reservations, with optimistic concurrency and a versioned schema migrated on open. PostgreSQL is the `postgres` extra (`psycopg` 3). `MemoryStorage` is unchanged. Nothing beyond Pydantic is required. | Hosts need crash recovery. SQLite stays free of extra dependencies; PostgreSQL is opt-in and passes `StorageContractSuite`. |
-| D43 | 5.8 and 8.3: `resume` continues a suspended execution | `resume` also recovers a `RUNNING` execution left by a dead process. A capability call left `IN_FLIGHT` becomes `UNCERTAIN` and the execution `FAILED` with `requires_reconciliation`; the provider is not called. A `context.record` left `IN_FLIGHT` is computed again, unless a capability call is also in flight. With no in-flight capability call, the executor is replayed. A policy denial from `RUNNING` ends `FAILED` (`policy_denied_on_resume`), because the transition table has no `RUNNING -> DENIED`. | The suspended coroutine is gone. The journal is what survived. A record's result was never returned, so recomputing it does not repeat a governed side effect. `READY -> DENIED` is unchanged. A crash during `VALIDATING` is still not recovered: the output was not stored, and there is no `VALIDATING -> VALIDATING` edge to run validation again. |
+| D43 | 5.8 and 8.3: `resume` continues a suspended execution | `resume` also recovers a `RUNNING` execution left by a dead process. A capability call left `IN_FLIGHT` becomes `UNCERTAIN` and the execution `FAILED` with `requires_reconciliation`; the provider is not called. A `context.record` left `IN_FLIGHT` is computed again, unless a capability call is also in flight. With no in-flight capability call, the executor is replayed. A policy denial from `RUNNING` ends `FAILED` (`policy_denied_on_resume`), because the transition table has no `RUNNING -> DENIED`. | The suspended coroutine is gone. The journal is what survived. A record's result was never returned, so recomputing it does not repeat a governed side effect. `READY -> DENIED` is unchanged. Recovery of a crash during `VALIDATING` is D48. |
 | D44 | 5.6: the executor context exposes `invoke` and `add_evidence` | Added `context.record(action_id, fingerprint=, compute=)` and `context.capability_specs` (granted capabilities only). `CapabilitySpec` gains an optional `params_schema`. | Agents need non-deterministic model calls journaled to stay replayable (spec 5.2 asks for it), and tools need descriptions and argument schemas. |
 | D45 | 8.1: every journal entry names a granted capability | `record` entries use the reserved marker `id42.record`; providers cannot declare capabilities under `id42.` | Records are not grantable and must never collide with a real capability. |
 | D46 | 5.6: `max_actions` counts `context.invoke` calls | It also counts `context.record` calls | Model calls are what makes an agent run long; the limit must bound them. |
 | D47 | 5.2: executors must not catch `BaseException` | An exception group that holds only the suspension signal, or that signal plus cancellation of its siblings, suspends the execution. A group of only cancellation is cancellation. A group that also holds another error fails the execution, so that error is not discarded. `KeyboardInterrupt` and `SystemExit` propagate. An uncertain side effect is reconciled before the execution is allowed to wait for approval. | Without this, a group escaped `run()` and left the execution `RUNNING`, or a suspension hid a second failure. |
+| D48 | 4.1, 5.8 and 9: a crash during `VALIDATING` | `resume` replays the executor to rebuild the output and runs the validators again under `execution_limits.timeout`. Journaled capability calls are not performed again. A stored `context.record`, including a `RecordedModel` response, is returned from the journal and `compute` is not called. A missing record, a different fingerprint, or a record with no stored result fails closed and is not computed. There is no second `VALIDATING` transition and no second `work.outcome.validation_started`. A policy denial, an `IN_FLIGHT` or `UNCERTAIN` capability call, a `PENDING_APPROVAL` action, or a replay that is not a pure replay ends `VALIDATION_FAILED`. An `IN_FLIGHT` capability call is still marked `UNCERTAIN`, and `requires_reconciliation` is stored on the error. An `IN_FLIGHT` record is not marked `UNCERTAIN`. The replay has its own timeout budget, separate from validation, as the first run does (D39). | The output is not stored until validation finishes. Validators are read-only and must be idempotent (spec 9), so running them again does not repeat the side effect. A model response is already in the journal (D44), so calling the provider again would not be a replay. The transition table has no `VALIDATING -> FAILED`, `VALIDATING -> DENIED` or `VALIDATING -> VALIDATING`. |
 
 The M3 note on expiry is resolved: an expired PENDING approval cancels its execution
 (reason `approval_expired`), as specification 7.5 requires. An expired GRANTED approval
@@ -219,16 +220,19 @@ never retries.
 - `resume` runs these steps:
   1. verify the actor and its right to resume;
   2. expire due approvals;
-  3. require `READY` and an unchanged definition digest;
-  4. reload the stored input;
-  5. claim the execution;
-  6. re-evaluate the policy;
-  7. run the executor again from the start.
+  3. require an unchanged definition digest and reload the stored input;
+  4. claim the execution (another driver receives the execution unchanged);
+  5. branch on the status:
+     - `READY`: re-evaluate the policy and run the executor again from the start;
+     - `RUNNING`: recover as in D43;
+     - `VALIDATING`: recover as in D48;
+     - any other status: return the execution unchanged.
 
   Journaled `SUCCEEDED` actions are replayed (an action that differs fails with
   `non_deterministic`). Journaled `FAILED` actions raise again. A `PENDING_APPROVAL`
-  action consumes a matching grant, or invalidates a grant whose digest differs and
-  requests a new one.
+  action on a `READY` resume consumes a matching grant, or invalidates a grant whose
+  digest differs and requests a new one. On a `VALIDATING` resume that action is not
+  performed.
 - `cancel` moves `CREATED`, `READY`, `WAITING_APPROVAL` or `WAITING_REVIEW` to
   `CANCELLED` and invalidates open approvals. A running execution cannot be cancelled
   in 0.1.0.
@@ -255,6 +259,27 @@ is at version 1; its resume claim is a session advisory lock, not a row. See
    actions and without transitioning `RUNNING -> RUNNING`. An `IN_FLIGHT` record is
    computed again.
 
-A crash during `VALIDATING` is not recovered: the output is not stored until that
-phase finishes, and resume does not synthesize it. That recovery, and a
-reconciliation tool for uncertain side effects, are still open.
+`resume` of a `VALIDATING` execution (D48):
+
+1. The definition digest and the stored input are checked, as for a `READY` resume.
+2. The resume claim is taken (D31). If another driver holds it, the execution is
+   returned unchanged.
+3. An `IN_FLIGHT` capability call is marked `UNCERTAIN`. An `IN_FLIGHT` or
+   `UNCERTAIN` capability call, or a `PENDING_APPROVAL` entry, fails the validation
+   closed. The executor does not run and the provider is not called. An `IN_FLIGHT`
+   record is not marked `UNCERTAIN`.
+4. Otherwise the policy is evaluated again. A denial ends `VALIDATION_FAILED`
+   (`policy_denied_on_resume`).
+5. The executor is replayed, under the execution timeout, only to rebuild the output.
+   A capability call that is not already a completed or failed journal entry does not
+   reach the provider. A stored `context.record` is returned and `compute` is not
+   called. A missing record, a different fingerprint, or a record with no stored
+   result ends `VALIDATION_FAILED` (`non_deterministic`) and is not computed. A
+   violation, a timeout or an exception ends `VALIDATION_FAILED`.
+6. A record that is still `IN_FLIGHT` after that replay fails the validation closed.
+   It is not computed.
+7. Validators run again under a fresh timeout budget. The phase ends
+   `VALIDATION_FAILED`, `WAITING_REVIEW` or `COMPLETED`. That transition and its
+   event are one commit. `work.outcome.validation_started` is not emitted again.
+
+A reconciliation tool for uncertain side effects is still open.

@@ -42,7 +42,12 @@ resume claim is left alone. Otherwise:
   call is also still `IN_FLIGHT`, the execution fails and the record is not
   computed again.
 
-See [Storage](../storage.md).
+`resume` also recovers an execution left `VALIDATING`, on every storage that still
+holds the record. The executor runs again only to rebuild the output. A side effect
+that already completed is not called again. A stored `context.record` is returned
+from the journal; a missing, mismatched or unfinished record is not computed.
+Validators run again; they are read-only and must be safe to run twice. The rules,
+including when recovery fails closed, are in [Storage](../storage.md).
 
 ## Uncertain side effects
 

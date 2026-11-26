@@ -70,7 +70,10 @@ response with `context.record`. The n-th request of the run is the action
    continues with new model calls from there.
 
 If the conversation differs on replay, the execution fails as `non_deterministic`
-and the model is not called again. The comparison covers the model id, the sampling
+and the model is not called again. A crash during validation is the same replay:
+`resume` returns each stored response and does not call the model. A missing or
+different recording fails closed as `VALIDATION_FAILED` (`non_deterministic`). See
+[Storage](storage.md). The comparison covers the model id, the sampling
 settings, the tool and output schemas, and the content the model must see again,
 including thinking signatures and provider payloads such as a compaction. It leaves
 out timestamps, run ids, usage and the provider's reported model name, which change

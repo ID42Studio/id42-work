@@ -133,7 +133,7 @@ next time it is opened. Adding a migration later means appending a new version i
 
 ## Crash recovery
 
-`resume` does two jobs.
+`resume` does three jobs.
 
 - A `READY` execution (an approval was granted) runs the executor again from the
   start. `SUCCEEDED` actions return the journaled result and do not call the
@@ -141,6 +141,10 @@ next time it is opened. Adding a migration later means appending a new version i
   grant whose digest matches, or invalidates one that does not.
 - A `RUNNING` execution means the previous process stopped while it was driving.
   Resume continues it only when no live claim still holds it.
+- A `VALIDATING` execution means the previous process stopped after the executor
+  returned, while validators were running. The side effect is already in the
+  journal. Resume rebuilds the output and runs the validators again. It continues
+  only when no live claim still holds the execution.
 
 If a capability call is still `IN_FLIGHT`, resume marks each such entry `UNCERTAIN`,
 emits `work.action.uncertain`, and moves the execution to `FAILED` with
@@ -161,12 +165,46 @@ the transition table has no such edge.
 `run` with the same idempotency key still returns the existing execution and does
 not resume it. Call `resume` yourself.
 
-A crash while the status is `VALIDATING` leaves the execution there. The output is
-not stored until validation finishes, and `resume` does not invent it. Recovering
-that state is the next step: the executor would have to run again, and validation
-would have to continue without a second `VALIDATING` transition. Resume of
-`WAITING_APPROVAL` is unchanged: decide the approval (which moves the execution to
-`READY`), then resume.
+A crash during `VALIDATING` is recovered by the same `resume` call. The output is
+not stored until that phase finishes, so resume does not read it back. It runs the
+executor again. `SUCCEEDED` actions return the recorded result and do not call the
+provider. A stored `context.record`, including a `RecordedModel` response, is
+returned the same way and `compute` is not called. The executor must be
+deterministic, the same contract as any other resume. An action that is not already
+a completed or failed journal entry is not performed: recovery must not start a new
+side effect. A `FAILED` action raises again, as on any replay. A missing record, a
+different fingerprint, or a record with no stored result fails closed and is not
+computed.
+
+The replay uses `execution_limits.timeout` as its own budget. Validators then run
+under a fresh budget, measured from the start of this validation phase. The
+execution is already `VALIDATING`. The transition table has no
+`VALIDATING -> VALIDATING` edge, so resume does not emit
+`work.outcome.validation_started` again. The phase ends `VALIDATION_FAILED`,
+`WAITING_REVIEW` or `COMPLETED`. That transition and its event are one commit.
+
+Validators are read-only. They may call only capabilities with
+`side_effecting=False`, and those calls are not journaled, so a recovery run may
+call a read-only provider again. A validator must be safe to run more than once.
+A validator that raises, or that is still running at the deadline, is a failed
+check, as on the first run.
+
+`VALIDATING` cannot move to `FAILED` or `DENIED`. When recovery cannot safely
+finish, it fails closed to `VALIDATION_FAILED` and does not call the provider:
+
+- the resuming actor's policy now denies the work (`policy_denied_on_resume`);
+- the journal has an `IN_FLIGHT` or `UNCERTAIN` capability call
+  (`uncertain_outcome`; the `IN_FLIGHT` call is marked `UNCERTAIN`, and
+  `requires_reconciliation` is set);
+- the journal has a `PENDING_APPROVAL` action, the replay asks for an action that
+  was not completed, or a `context.record` is missing, mismatched or unfinished
+  (`non_deterministic`). An unfinished record is not computed and is not marked
+  `UNCERTAIN`;
+- the replay raises, or exceeds the execution timeout (`executor_error` or
+  `timeout`).
+
+Resume of `WAITING_APPROVAL` is unchanged: decide the approval (which moves the
+execution to `READY`), then resume.
 
 See [Journal and replay](concepts/journal.md) for the replay rules,
 `examples/sqlite_resume.py` for a restart across an approval, and
@@ -213,7 +251,8 @@ process reserved it.
   `timeout`, then SQLite raises. The SDK wraps open failures as `StorageError`.
 - **A hung SQLite process can be stolen after `resume_claim_ttl`.** PostgreSQL does
   not expire a claim while the session is open.
-- **A crash during `VALIDATING` is not recovered yet.** The output never reached the
-  database. Replaying validation is the next recovery step.
+- **Validation recovery does not repeat a finished side effect.** The output is
+  rebuilt from the journal. A new side effect is refused. Read-only validator calls
+  may run again, because they are not journaled.
 - **No reconciliation tool.** Uncertain actions are recorded. Comparing them with the
   external system is the host's job.

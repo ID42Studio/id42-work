@@ -20,8 +20,8 @@ Core principle: **autonomy is a permission, not a capability.**
 !!! warning "Release candidate"
     Version 0.1.0 is a pre-alpha release candidate. `MemoryStorage` is in-memory.
     `SqliteStorage` and `PostgresStorage` persist executions and can resume after a
-    restart. A resume claim stops two live processes from driving the same execution.
-    A crash during `VALIDATING` is not recovered yet. Read [Security](security.md)
+    restart, including a crash during `VALIDATING`. A resume claim stops two live
+    processes from driving the same execution. Read [Security](security.md)
     and [Storage](storage.md) before using it near real systems.
 
 ## Where to go next

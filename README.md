@@ -265,8 +265,8 @@ Details, module map and every deviation from the specification are in
 - Version 0.1.0 release candidate, licensed Apache-2.0, maintained by ID42 Studio.
 - `MemoryStorage` is in-memory. `SqliteStorage` persists to a file.
   `PostgresStorage` (`id42-work[postgres]`) persists to PostgreSQL. Both resume
-  after a restart, and a claim stops two live processes from driving one execution.
-  A crash during `VALIDATING` is not recovered yet. See `docs/storage.md`.
+  after a restart, including a crash during `VALIDATING`, and a claim stops two
+  live processes from driving one execution. See `docs/storage.md`.
 - Capability enforcement covers calls made through the SDK. It cannot stop arbitrary
   Python code in the same process from calling external systems directly.
 - The SDK cannot guarantee exactly-once external side effects. Uncertain results are
@@ -276,10 +276,10 @@ Details, module map and every deviation from the specification are in
 
 ## Roadmap
 
-No dates are committed. SQLite, PostgreSQL, cross-process resume claims and the
-PydanticAI agent integration are in the tree. Still open: recovering a crash during `VALIDATING`, reconciliation
-tooling, more agent adapters (LangGraph, MCP), an Odoo 18 connector package,
-and workflow composition. See [docs/roadmap.md](docs/roadmap.md).
+No dates are committed. SQLite, PostgreSQL, cross-process resume claims, recovery
+from a crash during `VALIDATING`, and the PydanticAI agent integration are in the
+tree. Still open: reconciliation tooling, more agent adapters (LangGraph, MCP), an
+Odoo 18 connector package, and workflow composition. See [docs/roadmap.md](docs/roadmap.md).
 
 ## Contributing
 

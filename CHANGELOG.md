@@ -34,6 +34,16 @@ the public API; breaking changes are listed explicitly.
   lease. A SQLite file from the previous slice migrates to schema version 2 on open.
 - `examples/sqlite_resume.py` reopens a database, keeps an approval bound to its
   digest, and resumes. `examples/postgres_resume.py` does the same on PostgreSQL.
+- `resume` recovers an execution left in `VALIDATING`. The executor is replayed to
+  rebuild the output and does not call the provider again for a side effect that
+  already completed. A stored `context.record`, including a `RecordedModel`
+  response, is replayed and `compute` is not called. A missing, mismatched or
+  unfinished record fails closed as `non_deterministic` and is not computed.
+  Validators run again under `execution_limits.timeout`. The execution does not
+  enter `VALIDATING` a second time. A policy denial, an unsafe journal entry, or a
+  replay that is not a pure replay ends `VALIDATION_FAILED` without calling the
+  provider. An `IN_FLIGHT` capability call is marked `UNCERTAIN`. No schema
+  migration is required.
 
 ### Changed
 
@@ -64,9 +74,9 @@ the public API; breaking changes are listed explicitly.
 ### Documentation
 
 - `docs/storage.md` describes the backends, configuration, migrations, the resume
-  claim and the limits. Architecture deviations D31, D42 and D43 record the adapters,
-  the claim and crash recovery. Recovering a crash during `VALIDATING` stays open:
-  the output is not stored until that phase finishes.
+  claim and the limits. Architecture deviations D31, D42, D43 and D48 record the
+  adapters, the claim and crash recovery, including a crash during `VALIDATING`.
+  D44 through D47 record `context.record` and the agent integrations.
 
 ## [0.1.0rc2] - 2026-11-14
 

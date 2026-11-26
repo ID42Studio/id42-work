@@ -20,11 +20,14 @@ Done:
 - A resume claim is visible across processes. SQLite stores a lease (owner, pid,
   expiry) inside `BEGIN IMMEDIATE`. PostgreSQL holds a session advisory lock, which
   ends when the connection closes.
+- Crash recovery from `VALIDATING`. `resume` replays the executor to rebuild the
+  output, does not call the provider for a side effect that already finished, and
+  runs the validators again. A stored `context.record` or `RecordedModel` response
+  is replayed and is not computed again. The execution does not enter `VALIDATING`
+  a second time.
 
 Still open:
 
-- Recovering a crash during `VALIDATING`. The output is not stored until that phase
-  finishes, and `resume` does not invent it.
 - Reconciliation tooling for uncertain side effects.
 - Registry-level events (`work.definition.registered` / `replaced`).
 
