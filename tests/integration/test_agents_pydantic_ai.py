@@ -13,6 +13,7 @@ os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")
 from pydantic import BaseModel
 from pydantic_ai import Agent
 from pydantic_ai.messages import (
+    CompactionPart,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
@@ -334,6 +335,100 @@ def test_recorded_model_prefix_is_validated(prefix: str) -> None:
 
 def test_amount_decimal_from_float_is_exact() -> None:
     assert Decimal(repr(1250.5)) == Decimal("1250.5")
+
+
+async def test_a_changed_sampling_setting_is_a_different_conversation() -> None:
+    llm = ScriptedLLM()
+
+    class Tuned(BillAgent):
+        async def execute(self, input_data: BillRequest, context: ExecutionContext) -> BillResult:
+            self.runs += 1
+            agent = Agent(
+                RecordedModel(FunctionModel(self.llm), context),
+                toolsets=[capability_toolset(context)],
+                output_type=BillResult,
+                model_settings={"temperature": float(self.runs)},
+            )
+            result = await agent.run(f"Draft bill {input_data.invoice_number}.")
+            return result.output
+
+    setup = Setup(AutonomyLevel.SUPERVISED, Tuned(llm))
+    waiting = await setup.run()
+    (approval,) = await setup.runner.approvals.list_pending(waiting.execution_id)
+    await setup.runner.approvals.approve(approval.approval_id, reviewer=setup.reviewer)
+    failed = await setup.runner.resume(waiting.execution_id, actor=setup.clerk)
+    assert failed.status_reason == "non_deterministic"
+    assert llm.calls == 2
+    assert setup.odoo.count(INVOICE_PREPARE) == 0
+
+
+async def test_a_changed_compaction_payload_is_a_different_conversation() -> None:
+    payload = {"encrypted_content": "payload-A"}
+    llm = ScriptedLLM()
+
+    class Compacting(BillAgent):
+        async def execute(self, input_data: BillRequest, context: ExecutionContext) -> BillResult:
+            history: list[ModelMessage] = [
+                ModelResponse(
+                    parts=[
+                        CompactionPart(
+                            content=None,
+                            provider_name="openai",
+                            id="compact-1",
+                            provider_details={"encrypted_content": payload["encrypted_content"]},
+                        )
+                    ]
+                )
+            ]
+            agent = Agent(
+                RecordedModel(FunctionModel(self.llm), context),
+                toolsets=[capability_toolset(context)],
+                output_type=BillResult,
+            )
+            result = await agent.run(
+                f"Draft bill {input_data.invoice_number}.", message_history=history
+            )
+            return result.output
+
+    setup = Setup(AutonomyLevel.SUPERVISED, Compacting(llm))
+    waiting = await setup.run()
+    assert waiting.status is S.WAITING_APPROVAL
+    payload["encrypted_content"] = "payload-B"
+    (approval,) = await setup.runner.approvals.list_pending(waiting.execution_id)
+    await setup.runner.approvals.approve(approval.approval_id, reviewer=setup.reviewer)
+    failed = await setup.runner.resume(waiting.execution_id, actor=setup.clerk)
+    assert failed.status_reason == "non_deterministic"
+    assert setup.odoo.count(INVOICE_PREPARE) == 0
+
+
+async def test_float_tool_arguments_keep_their_approval_on_resume() -> None:
+    llm = ScriptedLLM(amount=1250.5)
+    setup = Setup(AutonomyLevel.SUPERVISED, BillAgent(llm))
+    waiting = await setup.run()
+    (approval,) = await setup.runner.approvals.list_pending(waiting.execution_id)
+    assert approval.params_preview["amount"] == "1250.5"
+    await setup.runner.approvals.approve(approval.approval_id, reviewer=setup.reviewer)
+    done = await setup.runner.resume(waiting.execution_id, actor=setup.clerk)
+    assert done.status is S.COMPLETED
+    assert setup.odoo.count(INVOICE_PREPARE) == 1
+    assert setup.odoo.moves[1]["amount"] == "1250.5"
+
+
+async def test_a_corrupt_journaled_response_does_not_echo_its_payload() -> None:
+    marker = "payload-that-must-not-leak"
+
+    class Tampered:
+        execution_id = None
+
+        async def record(self, action_id: str, *, fingerprint: object, compute: Any) -> Any:
+            return {"kind": "response", "parts": marker}
+
+    model = RecordedModel(FunctionModel(ScriptedLLM()), Tampered())  # type: ignore[arg-type]
+    agent = Agent(model, output_type=BillResult)
+    with pytest.raises(ExecutionError) as info:
+        await agent.run("hi")
+    assert marker not in str(info.value)
+    assert marker not in repr(info.value)
 
 
 async def test_journal_entry_that_is_not_a_response_is_refused() -> None:

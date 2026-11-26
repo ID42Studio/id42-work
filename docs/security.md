@@ -92,7 +92,9 @@ a request and before the SDK recorded it. The SDK therefore:
   key);
 - marks interrupted or ambiguous side effects `UNCERTAIN`, with
   `requires_reconciliation=True`;
-- never retries automatically, whether the effect is financial or not.
+- never retries a side effect automatically, whether the effect is financial or not.
+  A read that was cancelled because a sibling task hit an approval gate is run
+  again on resume; a side-effecting call in that situation stays `UNCERTAIN`.
 
 Treat at-least-once delivery and uncertain outcomes as normal cases in integrations.
 
@@ -104,8 +106,9 @@ action is detected and fails the execution.
 journals and events disappear when that process exits.
 
 `SqliteStorage` writes the same records to a file. `PostgresStorage` writes them to
-PostgreSQL. After a restart, `resume` replays completed actions and marks an
-`IN_FLIGHT` action `UNCERTAIN` instead of calling the provider again. A resume claim
+PostgreSQL. After a restart, `resume` replays completed actions. A capability call
+left `IN_FLIGHT` is marked `UNCERTAIN` and is not retried. A `context.record` left
+`IN_FLIGHT` is computed again, because its result was never returned. A resume claim
 stops a second live process from driving the same execution: a SQLite lease row, or
 a PostgreSQL session advisory lock that ends when the connection closes. There is
 no distributed transaction with the external system. The database is trusted host

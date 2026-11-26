@@ -22,7 +22,7 @@ from id42_work.exceptions import (
     NonDeterministicExecutionError,
     UncertainOutcomeError,
 )
-from id42_work.execution import Execution
+from id42_work.execution import Execution, ExecutionErrorInfo
 from id42_work.identifiers import ACTION_ID_PATTERN, RECORD_CAPABILITY
 from id42_work.journal import JournalEntry, JournalStatus, operation_id
 from id42_work.policy.capabilities import CapabilityCall
@@ -100,9 +100,11 @@ class ActionInvoker:
         """Journal ``compute()``'s JSON result, or replay it (``context.record``).
 
         Counts toward ``max_actions``. No grant or gate applies: a recorded computation
-        reaches nothing outside the executor through the SDK. Its failures are never
-        uncertain, so an interrupted or failed entry left by an earlier run is computed
-        again.
+        reaches nothing outside the executor through the SDK. A ``SUCCEEDED`` entry with
+        the same fingerprint is returned. A ``FAILED`` entry raises again. An entry left
+        ``IN_FLIGHT`` with the same fingerprint is computed again, because its result was
+        never returned. Any other status, or a different fingerprint or capability, fails
+        closed. A computation that suspends for approval leaves the entry ``IN_FLIGHT``.
         """
         state, eid = self._state, self._eid
         fingerprint_digest = self._count(action_id, fingerprint)
@@ -119,7 +121,7 @@ class ActionInvoker:
             same = (
                 entry.capability == RECORD_CAPABILITY and entry.params_digest == fingerprint_digest
             )
-            if entry.status in {JournalStatus.SUCCEEDED, JournalStatus.FAILED} and not same:
+            if not same:
                 msg = f"replayed record {action_id!r} differs from the journal"
                 raise state.fail(
                     NonDeterministicExecutionError(msg, execution_id=eid), "non_deterministic"
@@ -130,6 +132,10 @@ class ActionInvoker:
             if entry.status is JournalStatus.FAILED:
                 msg = f"replayed record {action_id!r} failed previously"
                 raise ExecutionFailedError(msg, execution_id=eid)
+            if entry.status is not JournalStatus.IN_FLIGHT:
+                state.reconcile = True
+                msg = f"record {action_id!r} has an uncertain outcome; reconciliation required"
+                raise state.fail(UncertainOutcomeError(msg, execution_id=eid), "uncertain_outcome")
         started = self._rec.now()
         in_flight = journal_entry(
             eid,
@@ -150,8 +156,13 @@ class ActionInvoker:
             await self._rec.settle(in_flight, JournalStatus.FAILED, error)
             await self._rec.emit(self._execution, EventType.ACTION_FAILED, payload)
             raise
-        except BaseException as error:  # cancellation or timeout: nothing outside changed
-            await self._rec.settle(in_flight, JournalStatus.FAILED, error)
+        except BaseException as error:
+            # An approval gate leaves the record in flight so resume can recompute it
+            # and consume the grant. Cancellation still settles the record as failed:
+            # the result was never returned, and resume of a cancelled execution does
+            # not retry it.
+            if not _suspends(error):
+                await self._rec.settle(in_flight, JournalStatus.FAILED, error)
             raise
         try:
             result = _JSON.validate_python(raw)
@@ -252,6 +263,8 @@ class ActionInvoker:
                 raise state.fail(
                     NonDeterministicExecutionError(msg, execution_id=eid), "non_deterministic"
                 )
+            if _retry_cancelled_read(entry, self._rec.capabilities.is_side_effecting(capability)):
+                return _NOT_REPLAYED
             raise ExecutionFailedError(msg, execution_id=eid)
         if entry.status is JournalStatus.IN_FLIGHT:
             await self._rec.mark_action_uncertain(self._execution, entry)
@@ -392,6 +405,26 @@ class ActionInvoker:
             raise
         finally:
             state.side_effect_in_flight = False
+
+
+def _suspends(error: BaseException) -> bool:
+    """Whether ``error`` is an approval suspension, including one inside a task group."""
+    if isinstance(error, ExecutionSuspended):
+        return True
+    if not isinstance(error, BaseExceptionGroup):
+        return False
+    grouped = cast("BaseExceptionGroup[BaseException]", error)
+    return grouped.subgroup(ExecutionSuspended) is not None
+
+
+def _retry_cancelled_read(entry: JournalEntry, side_effecting: bool) -> bool:
+    """Whether a failed entry is a read cancelled by a sibling approval gate.
+
+    A side-effecting call is not retried: the external system may already have
+    accepted it. A ``FAILED`` entry always carries an error.
+    """
+    error = cast(ExecutionErrorInfo, entry.error)
+    return error.type == "CancelledError" and not side_effecting
 
 
 def valid_action_id(action_id: object) -> bool:

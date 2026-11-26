@@ -215,8 +215,11 @@ See [examples/invoice_validation.py](examples/invoice_validation.py).
 
 ## AI agents
 
-An agent is an executor whose next step a model chooses. With the PydanticAI
-integration, the agent's tools are exactly the capabilities the execution was granted,
+The SDK is not an agent framework. This integration is optional (`pydantic-ai`
+extra): the core still governs one execution at a time and does not plan, call or
+orchestrate models. An agent is an executor whose next step a model chooses. With
+the PydanticAI integration, the agent's tools are exactly the capabilities the
+execution was granted,
 and every tool call goes through the same policy, approval gates and journal. Model
 responses are journaled too: when an execution resumes after an approval, the agent
 replays its recorded turns instead of asking the model again, so it reaches the

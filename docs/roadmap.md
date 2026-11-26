@@ -14,8 +14,9 @@ Done:
 - Approvals, journals, events, evidence, inputs and idempotency reservations survive
   the process.
 - Crash recovery through replay. `resume` of a `RUNNING` execution left by a dead
-  process replays `SUCCEEDED` actions. Actions left `IN_FLIGHT` become `UNCERTAIN`
-  and the execution ends `FAILED` with `requires_reconciliation`.
+  process replays `SUCCEEDED` actions. Capability calls left `IN_FLIGHT` become
+  `UNCERTAIN` and the execution ends `FAILED` with `requires_reconciliation`. A
+  `context.record` left `IN_FLIGHT` is computed again.
 - A resume claim is visible across processes. SQLite stores a lease (owner, pid,
   expiry) inside `BEGIN IMMEDIATE`. PostgreSQL holds a session advisory lock, which
   ends when the connection closes.

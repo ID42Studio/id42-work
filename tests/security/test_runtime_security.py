@@ -26,6 +26,30 @@ S = ExecutionStatus
 OK = InvoiceOutput(invoice_number="INV-1001", supplier_id="SUP-001", status="valid")
 
 
+async def test_capability_specs_are_copies_of_the_registry() -> None:
+    async def body(data: Any, context: ExecutionContext) -> Any:
+        schema = context.capability_specs[READ].params_schema
+        assert schema is not None
+        properties = schema["properties"]
+        assert isinstance(properties, dict)
+        properties["hacked"] = {"type": "string"}
+        return OK
+
+    env = Env(executor=FunctionExecutor(body))
+    registered = env.capabilities.spec(READ)
+    assert registered is not None
+    schema = {"type": "object", "properties": {"supplier_id": {"type": "string"}}}
+    env.capabilities._specs[READ] = registered.model_copy(update={"params_schema": schema})
+    execution = await env.run()
+    assert execution.status is S.COMPLETED
+    stored = env.capabilities.spec(READ)
+    assert stored is not None
+    assert stored.params_schema is not None
+    properties = stored.params_schema["properties"]
+    assert isinstance(properties, dict)
+    assert "hacked" not in properties
+
+
 async def test_ungranted_capability_fails_even_if_the_executor_catches_it() -> None:
     async def body(data: Any, context: ExecutionContext) -> Any:
         with contextlib.suppress(Exception):

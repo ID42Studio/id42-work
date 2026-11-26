@@ -69,9 +69,14 @@ response with `context.record`. The n-th request of the run is the action
    same path, reaches the post with the same parameters, consumes the approval, and
    continues with new model calls from there.
 
-If the conversation differs on replay, the execution fails as `non_deterministic`.
-This happens, for example, when the prompt includes the current time or a random
-value. Keep everything the agent sees derived from the input and from tool results.
+If the conversation differs on replay, the execution fails as `non_deterministic`
+and the model is not called again. The comparison covers the model id, the sampling
+settings, the tool and output schemas, and the content the model must see again,
+including thinking signatures and provider payloads such as a compaction. It leaves
+out timestamps, run ids, usage and the provider's reported model name, which change
+between processes without changing the conversation. A prompt that includes the
+current time or a random value still fails. Keep everything the agent sees derived
+from the input and from tool results.
 
 ## `context.record`
 
@@ -88,8 +93,11 @@ plan = await context.record(
 - **First run**: `compute()` is awaited and its JSON result is stored.
 - **Replay**: the same `action_id` with an equal `fingerprint` returns the stored
   result. A different fingerprint fails the execution as non-deterministic.
-- **Failures**: a failed computation raises again on replay. An interrupted one (for
-  example, the process died) is computed again, since nothing outside changed.
+- **Failures**: a failed computation raises again on replay. One left `IN_FLIGHT`
+  (the process died before the result was stored) is computed again, since nothing
+  outside the SDK changed. One left `UNCERTAIN` is not. If a capability call is also
+  still `IN_FLIGHT`, the execution fails for reconciliation and the record is not
+  computed again.
 - **No grant**: a recorded computation reaches nothing through the SDK by itself.
   Records count toward `max_actions` and share action ids with `invoke`.
 

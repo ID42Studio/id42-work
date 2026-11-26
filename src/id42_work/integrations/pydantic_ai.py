@@ -31,22 +31,39 @@ from collections.abc import AsyncGenerator, Iterable, Iterator
 from contextlib import asynccontextmanager
 from typing import Any, cast
 
-from pydantic import JsonValue
+from pydantic import JsonValue, ValidationError
 from pydantic_ai import RunContext, Tool
 from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter, ModelResponse
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.toolsets import FunctionToolset
 
 from id42_work.agents import AgentTool, agent_tools, call_tool, tool_action_id
 from id42_work.contracts import ExecutionContext
+from id42_work.error_info import describe_validation_error
 from id42_work.exceptions import ExecutionError
 
 __all__ = ["RecordedModel", "capability_tools", "capability_toolset"]
 
-_STABLE_MESSAGE_KEYS = ("kind", "instructions")
-_STABLE_PART_KEYS = ("part_kind", "content", "tool_name", "args", "tool_call_id", "outcome")
+_STABLE_MESSAGE_KEYS = ("kind", "instructions", "state")
+_STABLE_PART_KEYS = (
+    "part_kind",
+    "content",
+    "tool_name",
+    "args",
+    "tool_call_id",
+    "outcome",
+    "id",
+    "signature",
+    "provider_name",
+    "provider_details",
+    "tool_kind",
+    "scope",
+    "context_id",
+    "dynamic_ref",
+)
 
 
 def capability_tools(
@@ -90,9 +107,12 @@ class RecordedModel(WrapperModel):
     ``RecordedModel`` per agent run, created inside ``execute``, and give each agent a
     distinct ``prefix`` when an executor runs several.
 
-    The fingerprint that detects divergence on replay covers the conversation content
-    (message kinds, instructions, and each part's content, tool name, arguments and
-    call id), not timestamps, run ids or usage, which change on every run.
+    The fingerprint that detects divergence on replay covers the model id, the sampling
+    settings, the tool and output schemas, and the conversation content that the model
+    must see again: message kinds, instructions, state, and each part's content, tool
+    name, arguments, call id, signature and provider payload. Timestamps, run ids,
+    usage and the provider's reported model name are left out, because they change
+    between processes without changing the conversation.
     """
 
     def __init__(
@@ -124,9 +144,21 @@ class RecordedModel(WrapperModel):
             )
 
         stored = await self._context.record(
-            action_id, fingerprint=_fingerprint(messages), compute=compute
+            action_id,
+            fingerprint=_fingerprint(
+                messages,
+                model_id=self.model_id,
+                model_settings=model_settings,
+                parameters=model_request_parameters,
+            ),
+            compute=compute,
         )
-        (restored,) = ModelMessagesTypeAdapter.validate_python([stored])
+        try:
+            (restored,) = ModelMessagesTypeAdapter.validate_python([stored])
+        except ValidationError as error:
+            detail = describe_validation_error(error)
+            msg = f"journal entry {action_id!r} does not hold a model response: {detail}"
+            raise ExecutionError(msg, execution_id=self._context.execution_id) from None
         if not isinstance(restored, ModelResponse):
             msg = f"journal entry {action_id!r} does not hold a model response"
             raise ExecutionError(msg, execution_id=self._context.execution_id)
@@ -145,7 +177,13 @@ class RecordedModel(WrapperModel):
         yield  # pragma: no cover - makes this an async generator
 
 
-def _fingerprint(messages: list[ModelMessage]) -> list[JsonValue]:
+def _fingerprint(
+    messages: list[ModelMessage],
+    *,
+    model_id: str,
+    model_settings: ModelSettings | None,
+    parameters: ModelRequestParameters,
+) -> dict[str, JsonValue]:
     dumped = cast(
         "list[dict[str, Any]]", ModelMessagesTypeAdapter.dump_python(messages, mode="json")
     )
@@ -157,4 +195,28 @@ def _fingerprint(messages: list[ModelMessage]) -> list[JsonValue]:
             {key: part[key] for key in _STABLE_PART_KEYS if key in part} for part in parts
         ]
         projected.append(item)
-    return projected
+    settings: JsonValue = None
+    if model_settings is not None:
+        settings = cast("JsonValue", dict(model_settings))
+    return {
+        "model_id": model_id,
+        "model_settings": settings,
+        "messages": projected,
+        "request": {
+            "output_mode": parameters.output_mode,
+            "allow_text_output": parameters.allow_text_output,
+            "allow_image_output": parameters.allow_image_output,
+            "function_tools": [_tool_projection(tool) for tool in parameters.function_tools],
+            "output_tools": [_tool_projection(tool) for tool in parameters.output_tools],
+        },
+    }
+
+
+def _tool_projection(tool: ToolDefinition) -> JsonValue:
+    return {
+        "name": tool.name,
+        "description": tool.description,
+        "parameters": cast("JsonValue", tool.parameters_json_schema),
+        "kind": tool.kind,
+        "strict": tool.strict,
+    }

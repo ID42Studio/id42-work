@@ -49,7 +49,7 @@ class ExecutionContext(Protocol):
 
     @property
     def capability_specs(self) -> Mapping[str, CapabilitySpec]:
-        """Specs of the granted capabilities only (descriptions, parameter schemas)."""
+        """Copies of the granted capabilities' specs (descriptions, parameter schemas)."""
         ...
 
     @property
@@ -77,9 +77,11 @@ class ExecutionContext(Protocol):
 
         The first run awaits ``compute()`` and stores its result. A replay with the same
         ``action_id`` and an equal ``fingerprint`` returns the stored result without
-        calling ``compute``; a different fingerprint fails the execution as
-        non-deterministic. ``fingerprint`` must be canonicalizable (floats are allowed).
-        No grant is needed: ``record`` reaches nothing outside the executor by itself.
+        calling ``compute``. A different fingerprint, or an entry that is not this
+        record, fails the execution as non-deterministic. An entry left ``IN_FLIGHT``
+        with the same fingerprint is computed again. ``fingerprint`` must be
+        canonicalizable (floats are allowed). No grant is needed: ``record`` reaches
+        nothing outside the executor by itself.
         """
         ...
 

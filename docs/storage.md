@@ -142,13 +142,18 @@ next time it is opened. Adding a migration later means appending a new version i
 - A `RUNNING` execution means the previous process stopped while it was driving.
   Resume continues it only when no live claim still holds it.
 
-If any journal entry is still `IN_FLIGHT`, resume marks each of them `UNCERTAIN`,
+If a capability call is still `IN_FLIGHT`, resume marks each such entry `UNCERTAIN`,
 emits `work.action.uncertain`, and moves the execution to `FAILED` with
 `requires_reconciliation`. The provider is not called again. That is the case the
 specification describes: the process died during the call, the external system may
-already have accepted it, and the SDK does not retry.
+already have accepted it, and the SDK does not retry. A `context.record` left
+`IN_FLIGHT` is not one of those calls. Its result was never returned to the executor,
+so resume computes it again and replays capability calls it already completed. A
+journal update writes the status and the body in one transaction, so a crash cannot
+store `SUCCEEDED` without the result.
 
-If nothing is `IN_FLIGHT`, the executor runs again. Completed actions are replayed.
+If no capability call is `IN_FLIGHT`, the executor runs again. Completed actions are
+replayed.
 Work that had not started yet runs once. A policy that now denies the resuming actor
 fails the execution (`policy_denied_on_resume`). `RUNNING` cannot move to `DENIED`;
 the transition table has no such edge.
@@ -202,8 +207,8 @@ process reserved it.
 ## Limits
 
 - **Exactly-once is still impossible.** A crash after the external system accepted a
-  call and before the journal moved from `IN_FLIGHT` to `SUCCEEDED` is `UNCERTAIN`.
-  Reconcile with the operation id. The SDK will not retry.
+  capability call and before the journal moved from `IN_FLIGHT` to `SUCCEEDED` is
+  `UNCERTAIN`. Reconcile with the operation id. The SDK will not retry that call.
 - **SQLite serializes writers.** Many processes may read. A writer waits up to
   `timeout`, then SQLite raises. The SDK wraps open failures as `StorageError`.
 - **A hung SQLite process can be stolen after `resume_claim_ttl`.** PostgreSQL does

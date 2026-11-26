@@ -77,7 +77,11 @@ class RunContext:
         self._invoke = invoke
         self._record = record
         self._specs = MappingProxyType(
-            {name: spec for name, spec in capability_specs.items() if name in granted_capabilities}
+            {
+                name: spec.model_copy(deep=True)
+                for name, spec in capability_specs.items()
+                if name in granted_capabilities
+            }
         )
         self._new_evidence_id = new_evidence_id
         self._evidence: list[tuple[UUID, PendingEvidence]] = []

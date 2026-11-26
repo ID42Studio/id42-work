@@ -116,11 +116,11 @@ inconsistent record:
 | D40 | 12.1: `IdempotencyRepository` is `reserve, get` | Added `release(scope, execution_id)`. It drops the reservation only when that execution still owns it. | A call that fails before the execution exists must not pin the key. A waiter never releases a reservation it does not own. An input stored for the failed attempt is left behind; nothing references it. |
 | D41 | 12.2: an execution update and an event append are separate atomic operations | `Storage.commit_execution` stores the execution and appends its event, both or neither. `last_event_sequence` is the sequence that was appended. A sequence race retries; a lost revision does not. | Reading the sequence, then writing the execution, then appending the event could record a sequence the event did not get. |
 | D42 | 12.3: no durable persistence in 0.1.0 | `SqliteStorage` and `PostgresStorage` persist executions, journals, approvals, events, evidence, inputs and idempotency reservations, with optimistic concurrency and a versioned schema migrated on open. PostgreSQL is the `postgres` extra (`psycopg` 3). `MemoryStorage` is unchanged. Nothing beyond Pydantic is required. | Hosts need crash recovery. SQLite stays free of extra dependencies; PostgreSQL is opt-in and passes `StorageContractSuite`. |
-| D43 | 5.8 and 8.3: `resume` continues a suspended execution | `resume` also recovers a `RUNNING` execution left by a dead process. `IN_FLIGHT` journal entries become `UNCERTAIN` and the execution `FAILED` with `requires_reconciliation`; the provider is not called. With no `IN_FLIGHT` entry, the executor is replayed. A policy denial from `RUNNING` ends `FAILED` (`policy_denied_on_resume`), because the transition table has no `RUNNING -> DENIED`. | The suspended coroutine is gone. The journal is what survived. `READY -> DENIED` is unchanged. A crash during `VALIDATING` is still not recovered: the output was not stored, and there is no `VALIDATING -> VALIDATING` edge to run validation again. |
+| D43 | 5.8 and 8.3: `resume` continues a suspended execution | `resume` also recovers a `RUNNING` execution left by a dead process. A capability call left `IN_FLIGHT` becomes `UNCERTAIN` and the execution `FAILED` with `requires_reconciliation`; the provider is not called. A `context.record` left `IN_FLIGHT` is computed again, unless a capability call is also in flight. With no in-flight capability call, the executor is replayed. A policy denial from `RUNNING` ends `FAILED` (`policy_denied_on_resume`), because the transition table has no `RUNNING -> DENIED`. | The suspended coroutine is gone. The journal is what survived. A record's result was never returned, so recomputing it does not repeat a governed side effect. `READY -> DENIED` is unchanged. A crash during `VALIDATING` is still not recovered: the output was not stored, and there is no `VALIDATING -> VALIDATING` edge to run validation again. |
 | D44 | 5.6: the executor context exposes `invoke` and `add_evidence` | Added `context.record(action_id, fingerprint=, compute=)` and `context.capability_specs` (granted capabilities only). `CapabilitySpec` gains an optional `params_schema`. | Agents need non-deterministic model calls journaled to stay replayable (spec 5.2 asks for it), and tools need descriptions and argument schemas. |
 | D45 | 8.1: every journal entry names a granted capability | `record` entries use the reserved marker `id42.record`; providers cannot declare capabilities under `id42.` | Records are not grantable and must never collide with a real capability. |
 | D46 | 5.6: `max_actions` counts `context.invoke` calls | It also counts `context.record` calls | Model calls are what makes an agent run long; the limit must bound them. |
-| D47 | 5.2: executors must not catch `BaseException` | An exception group that holds the suspension signal (an executor using a task group) suspends the execution; any other non-`Exception` group fails it, except `KeyboardInterrupt` and `SystemExit` | Without this, a group escaped `run()` and left the execution `RUNNING`. |
+| D47 | 5.2: executors must not catch `BaseException` | An exception group that holds only the suspension signal, or that signal plus cancellation of its siblings, suspends the execution. A group of only cancellation is cancellation. A group that also holds another error fails the execution, so that error is not discarded. `KeyboardInterrupt` and `SystemExit` propagate. An uncertain side effect is reconciled before the execution is allowed to wait for approval. | Without this, a group escaped `run()` and left the execution `RUNNING`, or a suspension hid a second failure. |
 
 The M3 note on expiry is resolved: an expired PENDING approval cancels its execution
 (reason `approval_expired`), as specification 7.5 requires. An expired GRANTED approval
@@ -183,10 +183,13 @@ Default gates use the reviewer grant `approve:<work_id>` and a 24-hour TTL.
    - provider call;
    - journal `SUCCEEDED`, `FAILED` or `UNCERTAIN`;
    - `TOOL_RESULT` evidence.
-6. Precedence after the executor returns: a recorded violation means `FAILED`;
-   otherwise a suspension means `WAITING_APPROVAL`; otherwise an exception means
-   `FAILED` (reason `timeout`, `executor_error` and so on); otherwise the run moves to
-   `VALIDATING`.
+6. Precedence after the executor returns: a recorded violation means `FAILED`.
+   A suspension means `WAITING_APPROVAL` only when nothing is uncertain. An
+   exception means `FAILED` (reason `timeout`, `executor_error` and so on) and
+   still reconciles when a side effect was in flight. An uncertain outcome with
+   no exception means `FAILED` with `requires_reconciliation`, so the execution
+   does not wait for approval over an uncertain side effect. Otherwise the run
+   moves to `VALIDATING`.
 7. Validation runs the schema validator (re-validating the output, exact type
    required), then the registered validators, all within one `timeout` budget (D39).
    A `VALIDATION_REPORT` evidence record is
@@ -244,11 +247,13 @@ is at version 1; its resume claim is a session advisory lock, not a row. See
 1. The definition digest and the stored input are checked, as for a `READY` resume.
 2. The resume claim is taken (D31). If another driver holds it, the execution is
    returned unchanged.
-3. If the journal has an `IN_FLIGHT` action, each one is marked `UNCERTAIN` and the
-   execution fails with `requires_reconciliation`. The executor does not run.
+3. If the journal has an `IN_FLIGHT` capability call, each one is marked `UNCERTAIN`
+   and the execution fails with `requires_reconciliation`. The executor does not run.
+   A `context.record` left `IN_FLIGHT` is not marked uncertain.
 4. Otherwise the policy is evaluated again. A denial fails the execution. An
    allowance replays the executor from the start without repeating `SUCCEEDED`
-   actions and without transitioning `RUNNING -> RUNNING`.
+   actions and without transitioning `RUNNING -> RUNNING`. An `IN_FLIGHT` record is
+   computed again.
 
 A crash during `VALIDATING` is not recovered: the output is not stored until that
 phase finishes, and resume does not synthesize it. That recovery, and a

@@ -35,8 +35,12 @@ With `SqliteStorage` or `PostgresStorage`, `resume` also recovers an execution l
 resume claim is left alone. Otherwise:
 
 - `SUCCEEDED` actions are replayed and the provider is not called;
-- an action still `IN_FLIGHT` becomes `UNCERTAIN`, the execution ends `FAILED` with
-  `requires_reconciliation`, and the provider is not called again.
+- a capability call still `IN_FLIGHT` becomes `UNCERTAIN`, the execution ends
+  `FAILED` with `requires_reconciliation`, and the provider is not called again;
+- a `context.record` still `IN_FLIGHT` is computed again. Its result was never
+  returned, and capability calls it already completed are replayed. If a capability
+  call is also still `IN_FLIGHT`, the execution fails and the record is not
+  computed again.
 
 See [Storage](../storage.md).
 
