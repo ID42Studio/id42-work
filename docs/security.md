@@ -75,6 +75,30 @@ The SDK defends against:
 - **`context.record` needs no grant.** By itself it reaches nothing outside the
   executor: it only stores what the executor's own code computed.
 
+## MCP clients
+
+The optional MCP server (`docs/mcp.md`) is another untrusted caller. It does not
+widen what `WorkRunner` allows.
+
+- The client cannot pass an actor, a grant, a constraint or an approval decision.
+  There is no approve or reject tool. A waiting execution stays waiting until the
+  host decides through `ApprovalManager`.
+- The host actor is issued inside the server process and checked against that
+  process's `ActorAuthority` on every call. The first accepted identity is pinned.
+- The server shows and changes only executions with that actor id and tenant. A
+  `resume:` or `cancel:` grant does not reveal or cancel someone else's execution
+  through MCP. Calling `WorkRunner` directly still honours those grants.
+- `WorkRunner.list_executions` is not filtered. Only the MCP tool filters. Do not
+  return the runner's list to a remote client.
+- Journal results shown over MCP pass through the default redactor. Approval
+  parameter previews and action digests are left out. Events stay as the runner
+  stored them: identifiers and digests, not raw inputs.
+
+HTTP listens on `127.0.0.1` only. That address is not configurable. A client on
+another machine needs stdio in the same process, or a tunnel the host operates.
+The server does not add authentication of its own: anyone who can speak to the
+process can act as the host actor the factory issues.
+
 ## Limitations
 
 **In-process trust.** The SDK cannot sandbox Python. Code running in the same process

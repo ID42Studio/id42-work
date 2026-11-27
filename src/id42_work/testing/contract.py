@@ -108,6 +108,22 @@ class StorageContractSuite(ABC):
         assert await repo.get(uuid4()) is None
 
     @pytest.mark.asyncio
+    async def test_execution_list_orders_by_creation_time_then_id(self) -> None:
+        repo = self.make_storage().executions
+        assert await repo.list() == ()
+        same_time_later = _execution(execution_id=UUID(int=2))
+        same_time_earlier = _execution(execution_id=UUID(int=1))
+        newer = _execution(
+            execution_id=UUID(int=0),
+            created_at=_T0 + timedelta(seconds=5),
+            updated_at=_T0 + timedelta(seconds=5),
+        )
+        await repo.create(newer)
+        await repo.create(same_time_later)
+        await repo.create(same_time_earlier)
+        assert await repo.list() == (same_time_earlier, same_time_later, newer)
+
+    @pytest.mark.asyncio
     async def test_execution_create_rejects_duplicates_and_nonzero_revisions(self) -> None:
         repo = self.make_storage().executions
         execution = _execution()

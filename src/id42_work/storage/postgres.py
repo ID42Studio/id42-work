@@ -38,6 +38,7 @@ from id42_work.storage.codec import (
     dump_execution,
     dump_input,
     dump_record,
+    executions_by_age,
     load_execution,
     load_input,
     load_record,
@@ -314,6 +315,11 @@ class PostgresExecutionRepository:
         if row is None:
             return None
         return load_execution(str(row[0]))
+
+    async def list(self) -> tuple[Execution, ...]:
+        with self._db.reading() as conn:
+            rows = conn.execute("SELECT body FROM executions").fetchall()
+        return executions_by_age(tuple(load_execution(str(row[0])) for row in rows))
 
     async def compare_and_set(self, updated: Execution) -> None:
         with self._db.transaction() as conn:

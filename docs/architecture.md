@@ -20,7 +20,7 @@ specification requires (section 5 and 26).
 | `id42_work.policy.resolvers` | `StaticPolicyResolver` |
 | `id42_work.error_info` | `ExecutionErrorInfo`, `ErrorCause` |
 | `id42_work.registry` | `WorkRegistry`, `WorkBinding` |
-| `id42_work.runner` | `WorkRunner` (public entry point): `run`, `resume`, `cancel`, `expire_due` and sync variants |
+| `id42_work.runner` | `WorkRunner` (public entry point): `run`, `resume`, `cancel`, `expire_due`, `list_executions`, `registered_works` and sync variants |
 | `id42_work.approvals.manager` | `ApprovalManager`: `list_pending`, `approve`, `reject`, `expire_due` |
 | `id42_work.context` | `RunContext`, `ValidatorContext` (the contexts handed to user code) |
 | `id42_work._invoker` | Capability calls: checks, journal, replay, ACTION gates, provider calls (internal) |
@@ -34,6 +34,8 @@ specification requires (section 5 and 26).
 | `id42_work.storage.codec` | JSON round-trip for records, inputs and outcome models (internal) |
 | `id42_work.agents` | Framework-neutral agent tools: `agent_tools`, `tool_action_id`, `to_params`, `call_tool` |
 | `id42_work.integrations.pydantic_ai` | `capability_toolset`, `capability_tools`, `RecordedModel` (extra `pydantic-ai`) |
+| `id42_work.cli` | `id42-work` command. `mcp serve` loads the MCP extra |
+| `id42_work.mcp` | `WorkMcpServer` (extra `mcp`): tools and resources over `WorkRunner` |
 | `id42_work.testing` | `FakeOdooProvider`, `ManualClock`; `testing.contract.StorageContractSuite` (needs pytest) |
 | `id42_work.execution` | `Execution`, `ExecutionErrorInfo` |
 | `id42_work.approvals` | `Approval`, `ApprovalStatus`, `compute_action_digest` |
@@ -122,6 +124,7 @@ inconsistent record:
 | D46 | 5.6: `max_actions` counts `context.invoke` calls | It also counts `context.record` calls | Model calls are what makes an agent run long; the limit must bound them. |
 | D47 | 5.2: executors must not catch `BaseException` | An exception group that holds only the suspension signal, or that signal plus cancellation of its siblings, suspends the execution. A group of only cancellation is cancellation. A group that also holds another error fails the execution, so that error is not discarded. `KeyboardInterrupt` and `SystemExit` propagate. An uncertain side effect is reconciled before the execution is allowed to wait for approval. | Without this, a group escaped `run()` and left the execution `RUNNING`, or a suspension hid a second failure. |
 | D48 | 4.1, 5.8 and 9: a crash during `VALIDATING` | `resume` replays the executor to rebuild the output and runs the validators again under `execution_limits.timeout`. Journaled capability calls are not performed again. A stored `context.record`, including a `RecordedModel` response, is returned from the journal and `compute` is not called. A missing record, a different fingerprint, or a record with no stored result fails closed and is not computed. There is no second `VALIDATING` transition and no second `work.outcome.validation_started`. A policy denial, an `IN_FLIGHT` or `UNCERTAIN` capability call, a `PENDING_APPROVAL` action, or a replay that is not a pure replay ends `VALIDATION_FAILED`. An `IN_FLIGHT` capability call is still marked `UNCERTAIN`, and `requires_reconciliation` is stored on the error. An `IN_FLIGHT` record is not marked `UNCERTAIN`. The replay has its own timeout budget, separate from validation, as the first run does (D39). | The output is not stored until validation finishes. Validators are read-only and must be idempotent (spec 9), so running them again does not repeat the side effect. A model response is already in the journal (D44), so calling the provider again would not be a replay. The transition table has no `VALIDATING -> FAILED`, `VALIDATING -> DENIED` or `VALIDATING -> VALIDATING`. |
+| D49 | 2.2: the SDK is a library, not a hosted service. 5.5: runner reads are `get`, `events` and `evidence`. 12.1: `ExecutionRepository` has no list. | Optional extra `mcp` serves a Model Context Protocol server on stdio, or on streamable HTTP bound to `127.0.0.1`. Tools are `list_works`, `start_execution`, `get_execution`, `resume_execution`, `list_executions` and `cancel_execution`. Resources are the journal, events, evidence and approvals of one execution. The client cannot pass an actor, a grant or an approval decision. `ExecutionRepository.list` returns every stored execution, ordered by creation time then id. `WorkRunner.list_executions` exposes that list with no actor filter. `WorkRunner.registered_works` returns the registered definitions. The MCP server then keeps only executions whose actor id and tenant match the host actor. | Exposing capabilities as tools would skip the executor and the validators. The server calls `WorkRunner`, so policies, gates and validation stay in force. Listing executions needs a scan the storage protocols did not have. The list reads the existing executions table and needs no schema migration. |
 
 The M3 note on expiry is resolved: an expired PENDING approval cancels its execution
 (reason `approval_expired`), as specification 7.5 requires. An expired GRANTED approval
@@ -283,3 +286,10 @@ is at version 1; its resume claim is a session advisory lock, not a row. See
    event are one commit. `work.outcome.validation_started` is not emitted again.
 
 A reconciliation tool for uncertain side effects is still open.
+
+## MCP server
+
+`id42_work.mcp` (extra `mcp`, D49) is a host-configured server over one
+`WorkRunner`. The client starts and inspects executions. Policies, validators and
+approval gates remain inside the runner. The host supplies `ActorAuthority` and
+`issue_actor`; the client cannot choose either. See [MCP server](mcp.md).

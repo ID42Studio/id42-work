@@ -40,6 +40,7 @@ from id42_work.approvals.models import (
 from id42_work.canonical import digest
 from id42_work.context import ExecutionSuspended, RunContext, ValidatorContext
 from id42_work.contracts import PolicyResolver, Validator
+from id42_work.definitions import Work
 from id42_work.error_info import describe_validation_error
 from id42_work.events.dispatcher import EventDispatcher
 from id42_work.events.models import EventType, WorkEvent
@@ -316,6 +317,19 @@ class WorkRunner:
     async def approvals_for(self, execution_id: UUID) -> tuple[Approval, ...]:
         """Approvals requested for an execution."""
         return await self._rec.storage.approvals.list_for_execution(execution_id)
+
+    async def list_executions(self) -> tuple[Execution, ...]:
+        """Every execution in storage, ordered by creation time and then by id.
+
+        The result is not filtered by actor. A caller that serves an untrusted client
+        must keep only the executions that client is allowed to see.
+        """
+        return await self._rec.storage.executions.list()
+
+    def registered_works(self) -> tuple[Work, ...]:
+        """Works currently registered, sorted by id and version. No executable code."""
+        refs = self._registry.refs()
+        return tuple(self._registry.get(ref.id, ref.version).work for ref in refs)
 
     async def resume(
         self,

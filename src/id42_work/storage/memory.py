@@ -22,6 +22,7 @@ from id42_work.exceptions import ConcurrentModificationError, StorageError
 from id42_work.execution import Execution
 from id42_work.journal import JournalEntry, JournalStatus
 from id42_work.storage.claims import claim_deadline
+from id42_work.storage.codec import executions_by_age
 from id42_work.storage.protocols import IdempotencyRecord, IdempotencyScope
 
 
@@ -73,6 +74,11 @@ class MemoryExecutionRepository:
     async def get(self, execution_id: UUID) -> Execution | None:
         with self._lock:
             return self._executions.get(execution_id)
+
+    async def list(self) -> tuple[Execution, ...]:
+        with self._lock:
+            rows = tuple(self._executions.values())
+        return executions_by_age(rows)
 
     async def compare_and_set(self, updated: Execution) -> None:
         with self._lock:

@@ -9,6 +9,17 @@ the public API; breaking changes are listed explicitly.
 
 ### Added
 
+- MCP server: optional extra `mcp` (`pip install "id42-work[mcp]"`). `id42_work.mcp`
+  serves governed execution to MCP clients over stdio, or over streamable HTTP on
+  `127.0.0.1`. Tools start, inspect, resume, list and cancel executions of
+  registered works. Resources expose the journal, events, evidence and approvals.
+  The client cannot pass an actor, a grant or an approval decision. Policies,
+  validators and approval gates stay inside `WorkRunner`. The command is
+  `id42-work mcp serve --factory module:callable`. See `docs/mcp.md`.
+- `ExecutionRepository.list` and `WorkRunner.list_executions` return every stored
+  execution, ordered by creation time then id. `WorkRunner.registered_works`
+  returns the registered definitions. Neither is filtered by actor. The MCP server
+  filters executions before a client sees them. No schema migration.
 - AI agents: `id42_work.agents` describes granted capabilities as model tools, and
   `id42_work.integrations.pydantic_ai` (extra `pydantic-ai`) gives PydanticAI agents a
   `capability_toolset` and a `RecordedModel` that journals model responses. A resumed
@@ -76,7 +87,9 @@ the public API; breaking changes are listed explicitly.
 - `docs/storage.md` describes the backends, configuration, migrations, the resume
   claim and the limits. Architecture deviations D31, D42, D43 and D48 record the
   adapters, the claim and crash recovery, including a crash during `VALIDATING`.
-  D44 through D47 record `context.record` and the agent integrations.
+  D44 through D47 record `context.record` and the agent integrations. D49 records
+  the MCP server and `ExecutionRepository.list`. `docs/mcp.md` includes a nanobot
+  0.4.2 configuration for id42-agent.
 
 ## [0.1.0rc2] - 2026-11-14
 

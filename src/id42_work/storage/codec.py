@@ -21,6 +21,16 @@ from id42_work.execution import Execution
 _ModelT = TypeVar("_ModelT", bound=BaseModel)
 
 
+def executions_by_age(executions: tuple[Execution, ...]) -> tuple[Execution, ...]:
+    """Order executions by creation time, then by id."""
+    return tuple(
+        sorted(
+            executions,
+            key=lambda execution: (execution.created_at, str(execution.execution_id)),
+        )
+    )
+
+
 def model_ref(model: BaseModel) -> str:
     """Importable reference of a model instance's class."""
     cls = type(model)

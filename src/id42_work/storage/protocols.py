@@ -47,6 +47,14 @@ class ExecutionRepository(Protocol):
 
     async def get(self, execution_id: UUID) -> Execution | None: ...
 
+    async def list(self) -> tuple[Execution, ...]:
+        """Every execution, ordered by ``created_at`` and then by id.
+
+        The result is not filtered by actor. Callers that serve an untrusted client
+        must filter it themselves.
+        """
+        ...
+
     async def compare_and_set(self, updated: Execution) -> None:
         """Replace the stored record if its revision is ``updated.revision - 1``.
 

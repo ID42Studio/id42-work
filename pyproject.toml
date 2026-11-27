@@ -30,6 +30,10 @@ dependencies = ["pydantic>=2.7,<3"]
 [project.optional-dependencies]
 postgres = ["psycopg[binary]>=3.2,<4"]
 pydantic-ai = ["pydantic-ai-slim>=2.73,<3"]
+mcp = ["mcp>=2.3,<3"]
+
+[project.scripts]
+id42-work = "id42_work.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/ID42Studio/id42-work"
