@@ -20,11 +20,11 @@ Tools:
 
 | Tool | Arguments | Effect |
 |---|---|---|
-| `list_works` | none | Registered works, with schemas. No executable code. |
-| `start_execution` | `work_id`, `version`, `input_data`, optional `idempotency_key` | `runner.run` as the host actor. |
+| `list_works` | optional `limit`, optional `cursor` | One page of registered works, with schemas. No executable code. |
+| `start_execution` | `work_id`, `version`, `input_data`, optional `idempotency_key` | `runner.run` as the request actor. |
 | `get_execution` | `execution_id` | Status and verified output. |
 | `resume_execution` | `execution_id` | `runner.resume`. A waiting approval stays waiting. |
-| `list_executions` | optional `status` | Summaries of executions the host actor owns. |
+| `list_executions` | optional `status`, `limit`, `cursor` | One page of summaries for executions the request actor owns. |
 | `cancel_execution` | `execution_id`, optional `reason` | `runner.cancel`. Cancellation is not an approval. |
 
 Resources, all `application/json`:
@@ -36,25 +36,44 @@ Resources, all `application/json`:
 
 There is no approve, reject or reconcile tool. `id42-work approvals` and
 `id42-work reconcile` are separate commands, not tools on this server. Extra
-arguments such as `actor_id` or `grants` are
+arguments such as `actor_id`, `grants` or a credential are
 ignored. Amounts that the work schema types as `Decimal` must be JSON strings.
 A float would change the action digest.
+
+`limit` defaults to 50 and cannot exceed 100. `cursor` is opaque (`id42c1.`).
+Pass the previous response's `next_cursor` to read the next page. `next_cursor`
+is null on the last page. A cursor is a position, not a capability: the server
+still checks the actor.
 
 ## What stays gated
 
 The process that serves MCP is the host. It registers works, policies and
-providers, and it issues the actor.
+providers, and it issues actors.
 
-- The actor is re-issued on every call from `issue_actor`. The client never
-  sends one. The first successful issue pins `actor_id` and `tenant_id`. A later
-  issue with a different identity is refused.
+- By default the actor is re-issued on every call from `issue_actor`. The client
+  cannot name one. The first successful issue pins `actor_id` and `tenant_id`
+  for the process. A later issue with a different identity is refused. A
+  credential header is ignored in this mode, so another process on the loopback
+  interface cannot become a different actor.
+- A host that needs one actor per HTTP session passes `session_actor`.
+  `credential_session_actor` reads the `Id42-Actor-Credential` header
+  (`TrustedActor.to_credential`). The server still runs `ActorAuthority.verify`.
+  On HTTP a missing header is refused and is not replaced by the factory actor.
+  Stdio has no headers, so the fallback (pass `issue_actor`) stays one pinned
+  actor. The first verified identity of a session (`mcp-session-id`) is pinned.
+  A later credential for a different actor in that session is refused. A new
+  seal for the same actor and tenant is accepted. A request with no session id
+  does not share the stdio pin.
 - A sealed actor that this server's `ActorAuthority` does not accept is refused
   before the runner sees it.
-- Reads and writes are limited to executions with that actor id and tenant. An
-  execution owned by someone else is reported as not found, including to
-  `resume_execution` and `cancel_execution`. A `resume:` or `cancel:` grant on
-  the host actor does not widen this. The runner itself is less strict: those
-  grants can resume or cancel another actor's execution when you call it directly.
+- Reads and writes are limited to executions with that actor id and tenant. The
+  execution page is filtered in storage, before the limit. An execution owned by
+  someone else is reported as not found, including to `resume_execution` and
+  `cancel_execution`. A `resume:` or `cancel:` grant does not widen this. The
+  runner itself is less strict: those grants can resume or cancel another
+  actor's execution when you call it directly.
+- `host_actor()` stays the factory actor from `issue_actor`. `id42-work approvals --resume`
+  and `id42-work reconcile` keep using that actor, not the session credential.
 - Policies, validators and approval gates run inside the runner. `start_execution`
   returns `WAITING_APPROVAL` or `WAITING_REVIEW` and does not wait for the person.
   `resume_execution` does not decide. The host approves or rejects with
@@ -67,9 +86,10 @@ providers, and it issues the actor.
   and action digests are omitted. Events and evidence are the records the runner
   already stored.
 
-`WorkRunner.list_executions` returns every execution in storage, with no actor
-filter. The MCP tool filters after that. Do not hand the unfiltered list to a
-remote client.
+`WorkRunner.list_executions()` with no query returns every execution in storage,
+with no actor filter. Pass an `ExecutionListQuery` before handing rows to an
+untrusted caller. The MCP tools do that for the verified actor. Do not hand the
+unfiltered list to a remote client.
 
 ## Serve
 
@@ -79,6 +99,26 @@ The host factory is `module:callable` and returns a `WorkMcpServer`:
 def server() -> WorkMcpServer:
     return WorkMcpServer(runner, authority=authority, issue_actor=issue)
 ```
+
+That server has one actor, the factory's. To give each HTTP session its own
+verified actor, pass `session_actor`. Stdio still uses `issue`:
+
+```python
+from id42_work.mcp import credential_session_actor
+
+
+def server() -> WorkMcpServer:
+    return WorkMcpServer(
+        runner,
+        authority=authority,
+        issue_actor=issue,
+        session_actor=credential_session_actor(fallback=issue),
+    )
+```
+
+The HTTP client sends `Id42-Actor-Credential` with the value of
+`TrustedActor.to_credential()`. The header is a bearer token. `--http` still
+binds `127.0.0.1` only. Do not publish that port.
 
 `issue` calls `authority.issue(...)` and returns a `TrustedActor`. Keep the
 authority, the runner and the factory in the host process. Pass the same

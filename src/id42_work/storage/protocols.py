@@ -7,10 +7,10 @@ implementations must never use read-then-write.
 """
 
 from datetime import datetime, timedelta
-from typing import Protocol
+from typing import Protocol, Self
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 from id42_work._model import FrozenModel
 from id42_work.approvals.models import Approval, ApprovalStatus
@@ -38,6 +38,41 @@ class IdempotencyRecord(FrozenModel):
     execution_id: UUID
 
 
+class ExecutionListQuery(FrozenModel):
+    """One page of ``ExecutionRepository.list``.
+
+    Omit the query to read every execution. ``restrict_actor`` keeps one actor id
+    and one tenant, and the tenant may be null. ``status`` is an
+    ``ExecutionStatus`` value. ``after_created_at`` and ``after_execution_id`` are
+    the exclusive keyset position (both set, or neither). ``limit`` is a positive
+    maximum. The order is creation time, then id.
+    """
+
+    restrict_actor: bool = False
+    actor_id: str | None = None
+    tenant_id: str | None = None
+    status: str | None = None
+    after_created_at: str | None = None
+    after_execution_id: str | None = None
+    limit: int | None = None
+
+    @model_validator(mode="after")
+    def _check(self) -> Self:
+        if self.restrict_actor and not self.actor_id:
+            msg = "actor_id is required when restricting the list to one actor"
+            raise ValueError(msg)
+        if (self.after_created_at is None) != (self.after_execution_id is None):
+            msg = "after_created_at and after_execution_id must be set together"
+            raise ValueError(msg)
+        if self.limit is not None and self.limit < 1:
+            msg = "limit must be positive"
+            raise ValueError(msg)
+        if self.status == "":
+            msg = "status must not be empty"
+            raise ValueError(msg)
+        return self
+
+
 class ExecutionRepository(Protocol):
     """Execution records and their action journal."""
 
@@ -47,11 +82,13 @@ class ExecutionRepository(Protocol):
 
     async def get(self, execution_id: UUID) -> Execution | None: ...
 
-    async def list(self) -> tuple[Execution, ...]:
-        """Every execution, ordered by ``created_at`` and then by id.
+    async def list(self, query: ExecutionListQuery | None = None) -> tuple[Execution, ...]:
+        """Executions ordered by ``created_at`` and then by id.
 
-        The result is not filtered by actor. Callers that serve an untrusted client
-        must filter it themselves.
+        With no query, every execution is returned and nothing is filtered by actor.
+        A query restricts that sequence in the storage engine. Callers that serve an
+        untrusted client must pass a query for that client, or filter the full list
+        themselves.
         """
         ...
 

@@ -113,6 +113,8 @@ def test_constructor_rejects_the_wrong_types() -> None:
         WorkMcpServer(runner, authority=object(), issue_actor=lambda: None)
     with pytest.raises(TypeError, match="callable"):
         WorkMcpServer(runner, authority=authority, issue_actor=object())
+    with pytest.raises(TypeError, match="session_actor"):
+        WorkMcpServer(runner, authority=authority, issue_actor=lambda: None, session_actor=object())
 
 
 @pytest.mark.asyncio
@@ -259,7 +261,7 @@ async def test_guard_hides_unexpected_errors_and_propagates_cancellation() -> No
 
     hosted, runner, _provider = greeting_server()
 
-    async def _boom() -> tuple[object, ...]:
+    async def _boom(*_args: object, **_kwargs: object) -> tuple[object, ...]:
         raise RuntimeError("disk failed")
 
     runner.list_executions = _boom  # type: ignore[method-assign]

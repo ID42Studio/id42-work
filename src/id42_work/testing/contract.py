@@ -11,6 +11,7 @@ Subclass ``StorageContractSuite`` in a pytest module and implement ``make_storag
 Every test gets a fresh storage. Requires ``pytest`` and ``pytest-asyncio``.
 """
 
+import json
 from abc import ABC, abstractmethod
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -29,7 +30,15 @@ from id42_work.outcomes.models import Outcome, Severity, ValidationResult
 from id42_work.policy.models import ApprovalGate
 from id42_work.state_machine import transition_approval, transition_execution
 from id42_work.states import ExecutionStatus
-from id42_work.storage.protocols import IdempotencyRecord, IdempotencyScope, Storage
+from id42_work.storage.codec import dump_execution, execution_list_key
+from id42_work.storage.listing import page_executions
+from id42_work.storage.protocols import (
+    ExecutionListQuery,
+    ExecutionRepository,
+    IdempotencyRecord,
+    IdempotencyScope,
+    Storage,
+)
 
 _T0 = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
 _DIGEST = "a" * 64
@@ -122,6 +131,110 @@ class StorageContractSuite(ABC):
         await repo.create(same_time_later)
         await repo.create(same_time_earlier)
         assert await repo.list() == (same_time_earlier, same_time_later, newer)
+
+    @pytest.mark.asyncio
+    async def test_execution_list_pages_by_actor_status_and_keyset(self) -> None:
+        repo = self.make_storage().executions
+        a1 = _execution(execution_id=UUID(int=1), actor_id="actor:1", tenant_id="tenant")
+        a2 = _execution(execution_id=UUID(int=2), actor_id="actor:1", tenant_id="tenant")
+        other = _execution(
+            execution_id=UUID(int=3),
+            actor_id="actor:2",
+            tenant_id="tenant",
+            created_at=_T0 + timedelta(seconds=1),
+            updated_at=_T0 + timedelta(seconds=1),
+        )
+        no_tenant = _execution(
+            execution_id=UUID(int=4),
+            actor_id="actor:1",
+            tenant_id=None,
+            created_at=_T0 + timedelta(seconds=2),
+            updated_at=_T0 + timedelta(seconds=2),
+        )
+        cancelled = _execution(
+            execution_id=UUID(int=5),
+            actor_id="actor:1",
+            tenant_id="tenant",
+            status=ExecutionStatus.CANCELLED,
+            finished_at=_T0 + timedelta(seconds=3),
+            created_at=_T0 + timedelta(seconds=3),
+            updated_at=_T0 + timedelta(seconds=3),
+        )
+        later = _execution(
+            execution_id=UUID(int=6),
+            actor_id="actor:1",
+            tenant_id="tenant",
+            created_at=_T0 + timedelta(seconds=5),
+            updated_at=_T0 + timedelta(seconds=5),
+        )
+        for execution in (later, other, a2, cancelled, no_tenant, a1):
+            await repo.create(execution)
+        full = (a1, a2, other, no_tenant, cancelled, later)
+        assert await repo.list() == full
+        assert await repo.list(ExecutionListQuery()) == full
+        stored_created = json.loads(dump_execution(a1))["created_at"]
+        assert execution_list_key(a1) == (stored_created, str(a1.execution_id))
+
+        owned = ExecutionListQuery(restrict_actor=True, actor_id="actor:1", tenant_id="tenant")
+        assert await self._page(repo, owned) == (a1, a2, cancelled, later)
+        first = ExecutionListQuery(
+            restrict_actor=True, actor_id="actor:1", tenant_id="tenant", limit=2
+        )
+        assert await self._page(repo, first) == (a1, a2)
+        created, execution_id = execution_list_key(a2)
+        after_same_time = ExecutionListQuery(
+            restrict_actor=True,
+            actor_id="actor:1",
+            tenant_id="tenant",
+            after_created_at=execution_list_key(a1)[0],
+            after_execution_id=str(a1.execution_id),
+            limit=1,
+        )
+        assert await self._page(repo, after_same_time) == (a2,)
+        after_other = ExecutionListQuery(
+            restrict_actor=True,
+            actor_id="actor:1",
+            tenant_id="tenant",
+            after_created_at=created,
+            after_execution_id=execution_id,
+            limit=2,
+        )
+        assert await self._page(repo, after_other) == (cancelled, later)
+        assert await self._page(
+            repo,
+            ExecutionListQuery(restrict_actor=True, actor_id="actor:1", tenant_id=None),
+        ) == (no_tenant,)
+        assert await self._page(
+            repo,
+            ExecutionListQuery(
+                restrict_actor=True,
+                actor_id="actor:1",
+                tenant_id="tenant",
+                status=ExecutionStatus.CANCELLED.value,
+            ),
+        ) == (cancelled,)
+        assert await self._page(
+            repo, ExecutionListQuery(status=ExecutionStatus.CANCELLED.value)
+        ) == (cancelled,)
+        missing = ExecutionListQuery(
+            restrict_actor=True, actor_id="actor:missing", tenant_id="tenant"
+        )
+        assert await self._page(repo, missing) == ()
+        past_end = ExecutionListQuery(
+            restrict_actor=True,
+            actor_id="actor:1",
+            tenant_id="tenant",
+            after_created_at=execution_list_key(later)[0],
+            after_execution_id=str(later.execution_id),
+        )
+        assert await self._page(repo, past_end) == ()
+
+    async def _page(
+        self, repo: ExecutionRepository, query: ExecutionListQuery
+    ) -> tuple[Execution, ...]:
+        listed = await repo.list(query)
+        assert listed == page_executions(await repo.list(), query)
+        return listed
 
     @pytest.mark.asyncio
     async def test_execution_create_rejects_duplicates_and_nonzero_revisions(self) -> None:
