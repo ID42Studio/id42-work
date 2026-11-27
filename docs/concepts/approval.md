@@ -100,3 +100,9 @@ With `MemoryStorage`, pending approvals live in the process and disappear when i
 exits. `SqliteStorage` keeps them, including the digest they are bound to. After a
 restart the same digest is still valid; a different digest invalidates it. See
 [Storage](../storage.md).
+
+The approval row records the deciding actor id. It is not a second signature.
+The seal that allowed the decision is the reviewer's `TrustedActor`. Give the
+factory's `ActorAuthority` a `key_path` when a later process must verify that
+same seal. Without a key file each process generates its own key and issues a
+new operator. See [Security](../security.md).

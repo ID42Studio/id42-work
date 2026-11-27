@@ -9,6 +9,15 @@ the public API; breaking changes are listed explicitly.
 
 ### Added
 
+- `ActorAuthority` can persist its HMAC keys in a file (`key_path`, mode `0600`,
+  atomic replace). `create_key_file=True` creates the file when it is missing.
+  The constructor does not read the environment;
+  `authority_key_path_from_env()` reads `ID42_WORK_AUTHORITY_KEY_PATH`.
+  `rotate_keys()` retires the current key; retired keys still verify seals they
+  produced. `TrustedActor.to_credential()` / `from_credential()` carry a seal to
+  another process, which must still `verify` it. The default, with no path,
+  remains an in-memory key. The execution database does not store the key.
+  See `docs/security.md`.
 - `id42-work reconcile list|show|applied|not-applied|abandon --factory module:callable`
   settles an `UNCERTAIN` capability call. A provider may define
   `async reconcile(self, call) -> ReconciliationProbe`; `resume` runs it when the

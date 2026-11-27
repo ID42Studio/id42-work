@@ -126,6 +126,20 @@ class ReconciliationNotAllowedError(ReconciliationError):
     """The actor may not reconcile this execution (grant, tenant or self-decision)."""
 
 
+class AuthorityKeyError(WorkError):
+    """The authority key file is missing, unreadable, or not safe to use.
+
+    ``reason`` is a stable code: ``missing``, ``missing_directory``, ``exists``,
+    ``permissions``, ``symlink``, ``corrupt``, ``mismatch``, ``io``, ``memory``,
+    ``limit``, ``relative`` or ``invalid``. The message may name a path. It never
+    includes key material.
+    """
+
+    def __init__(self, message: str = "", *, reason: str = "invalid") -> None:
+        super().__init__(message)
+        self.reason = reason
+
+
 class OutcomeError(WorkError):
     """Base class for outcome failures."""
 
