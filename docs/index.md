@@ -30,6 +30,7 @@ Core principle: **autonomy is a permission, not a capability.**
 - Concepts: [Work](concepts/work.md), [Policy](concepts/policy.md),
   [Execution](concepts/execution.md), [Approval](concepts/approval.md),
   [Outcome](concepts/outcome.md), [Journal and replay](concepts/journal.md).
+- [AI agents](agents.md) and the [MCP server](mcp.md) (`id42-work[mcp]`).
 - [Storage](storage.md): memory, SQLite or PostgreSQL, migrations, claims, crash recovery.
 - [Architecture](architecture.md): module map, runtime order, deviations from the
   specification.

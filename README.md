@@ -47,8 +47,9 @@ or, with [uv](https://docs.astral.sh/uv/), for development:
 uv sync --all-extras --dev
 ```
 
-Optional extras: `postgres` (PostgreSQL storage) and `pydantic-ai` (AI agents), for
-example `pip install ".[pydantic-ai]"`.
+Optional extras: `postgres` (PostgreSQL storage), `pydantic-ai` (AI agents) and
+`mcp` (an MCP server over governed execution), for example
+`pip install "id42-work[mcp]"`.
 
 Once published, it will be installable with `pip install id42-work`.
 
@@ -277,9 +278,11 @@ Details, module map and every deviation from the specification are in
 ## Roadmap
 
 No dates are committed. SQLite, PostgreSQL, cross-process resume claims, recovery
-from a crash during `VALIDATING`, and the PydanticAI agent integration are in the
-tree. Still open: reconciliation tooling, more agent adapters (LangGraph, MCP), an
-Odoo 18 connector package, and workflow composition. See [docs/roadmap.md](docs/roadmap.md).
+from a crash during `VALIDATING`, the PydanticAI agent integration, and an MCP
+server (`id42-work[mcp]`) are in the tree. The MCP server starts governed
+executions; it does not expose capabilities as tools. Still open: reconciliation
+tooling, a LangGraph adapter, an Odoo 18 connector package, and workflow
+composition. See [docs/roadmap.md](docs/roadmap.md) and [docs/mcp.md](docs/mcp.md).
 
 ## Contributing
 

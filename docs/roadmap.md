@@ -35,8 +35,10 @@ Still open:
 
 - Done: PydanticAI (`id42_work.integrations.pydantic_ai`) and the framework-neutral
   layer `id42_work.agents`, with model calls journaled by `context.record`.
-- Next: LangGraph / LangChain (tools plus a journaled chat model), then an MCP server
-  that exposes granted capabilities to MCP clients.
+- Done: an MCP server (`id42-work[mcp]`, `id42_work.mcp`) that starts and inspects
+  governed executions. It does not expose capabilities as tools. Policies,
+  validators and approvals stay inside `WorkRunner`. See [MCP server](mcp.md).
+- Next: LangGraph / LangChain (tools plus a journaled chat model).
 - OpenTelemetry integration (`id42-work[otel]`): the spans and attributes of specification
   12, built on the event dispatcher. Not part of 0.1.0.
 

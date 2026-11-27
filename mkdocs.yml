@@ -31,6 +31,7 @@ nav:
       - Outcome and evidence: concepts/outcome.md
       - Journal and replay: concepts/journal.md
   - AI agents: agents.md
+  - MCP server: mcp.md
   - Storage: storage.md
   - Architecture: architecture.md
   - Security: security.md

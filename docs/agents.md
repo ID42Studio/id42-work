@@ -7,7 +7,9 @@ and the outcome is still validated before the execution completes.
 
 PydanticAI is supported today (`pip install "id42-work[pydantic-ai]"`). The
 framework-neutral layer in `id42_work.agents` is the base for other adapters
-(LangGraph is next on the roadmap).
+(LangGraph is next on the roadmap). A remote MCP client reaches the same runner
+through `id42-work[mcp]`; see [MCP server](mcp.md). That server does not turn
+capabilities into tools.
 
 ## Quick start
 

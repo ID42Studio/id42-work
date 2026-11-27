@@ -86,6 +86,10 @@ compare-and-set and the lookups use.
 
 - **Executions** are replaced only when the stored revision is the new revision minus
   one. A lost update raises `ConcurrentModificationError` and writes nothing.
+  `ExecutionRepository.list` reads every execution, ordered by creation time then
+  id. It is not filtered by actor. `WorkRunner.list_executions` returns that
+  sequence. The MCP server filters it before a client sees it. No schema change
+  is required.
 - **Journal entries** are inserted in call order. An update matches the expected
   status, the same way the in-memory repository does.
 - **Events** are gapless per execution. Registry-level events (no execution id) use

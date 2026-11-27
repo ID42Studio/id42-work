@@ -1,5 +1,6 @@
 """Every runnable example must succeed (specification 15, 18)."""
 
+import importlib.util
 import os
 import subprocess
 import sys
@@ -19,6 +20,7 @@ def test_all_specified_examples_exist() -> None:
         "hello_work.py",
         "human_approval.py",
         "invoice_validation.py",
+        "mcp_greeting.py",
         "postgres_resume.py",
         "sqlite_resume.py",
     ]
@@ -28,6 +30,8 @@ def test_all_specified_examples_exist() -> None:
 def test_example_runs(name: str) -> None:
     if name == "postgres_resume.py" and not os.environ.get("ID42_POSTGRES_DSN", "").strip():
         pytest.skip("ID42_POSTGRES_DSN is not set")
+    if name == "mcp_greeting.py" and importlib.util.find_spec("mcp") is None:
+        pytest.skip("mcp extra is not installed")
     result = subprocess.run(  # noqa: S603
         [sys.executable, str(EXAMPLES / name)],
         capture_output=True,

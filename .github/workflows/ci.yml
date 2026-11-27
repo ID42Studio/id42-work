@@ -115,7 +115,7 @@ jobs:
         run: |
           uv venv /tmp/wheel-env
           uv pip install --python /tmp/wheel-env dist/*.whl
-          /tmp/wheel-env/bin/python -c "import id42_work; print(id42_work.__version__)"
+          /tmp/wheel-env/bin/python -c "import sys, id42_work; assert 'mcp' not in sys.modules; print(id42_work.__version__)"
           /tmp/wheel-env/bin/python examples/hello_work.py
       - uses: actions/upload-artifact@v7
         with:
