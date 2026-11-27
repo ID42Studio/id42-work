@@ -39,6 +39,51 @@ After a START or ACTION grant, the execution is `READY`; call
 `runner.resume(execution_id, actor=...)`. An OUTCOME grant completes the execution
 directly. A rejection ends it `REJECTED`.
 
+`ApprovalConsole` is the same decision, for a host that should not hand the model
+the runner. Pass `actor_id` and the console seals an operator in the execution's
+tenant with only that approval's `reviewer_capability` (by default
+`approve:<work_id>`). Pass `reviewer` instead when the host already sealed one.
+Exactly one of the two. `resume=True` continues the execution with `resume_actor`,
+which must be the host execution actor, not the operator. A resume failure leaves
+the grant stored and raises `ApprovalResumeError`.
+
+```python
+console = ApprovalConsole(runner, authority=authority, resume_actor=issue_agent)
+pending = await console.list_pending()
+await console.approve(
+    pending[0].approval.approval_id,
+    actor_id="id42-operator",
+    reason="PO matched",
+    resume=True,
+)
+await console.reject(approval_id, actor_id="id42-operator", reason="duplicate bill")
+```
+
+The command uses the same factory as `id42-work mcp serve`. It requires the `mcp`
+extra because that factory returns a `WorkMcpServer`. It is not an MCP tool.
+
+```bash
+id42-work approvals list --factory myapp.governed:server
+id42-work approvals show APPROVAL_ID --factory myapp.governed:server
+id42-work approvals approve APPROVAL_ID \
+  --factory myapp.governed:server --actor id42-operator --reason "PO matched" --resume
+id42-work approvals reject APPROVAL_ID \
+  --factory myapp.governed:server --actor id42-operator --reason "duplicate bill"
+```
+
+`list` prints every execution that is still `WAITING_APPROVAL` or `WAITING_REVIEW`.
+It is not filtered by actor. `show` prints one JSON object, including the redacted
+parameter preview. `--resume` is off unless you set it. The operator is not the
+actor that resumes.
+
+The reason and the deciding actor are stored on the approval. `APPROVAL_DECISION`
+evidence records both (`reason`, `reason_provided`, `decision_actor_id`), and the
+approval event records the actor. The action journal does not grow a row for the
+decision: a decision is not a capability call. A second decision, a reviewer
+without the grant, the execution's own actor, another tenant, and an execution
+that is not waiting for that gate are refused and write nothing. Two decisions at
+once still have one winner.
+
 ## Expiry
 
 Approvals expire after their TTL (24 hours by default). Expiry runs lazily whenever

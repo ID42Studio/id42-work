@@ -31,6 +31,7 @@ Core principle: **autonomy is a permission, not a capability.**
   [Execution](concepts/execution.md), [Approval](concepts/approval.md),
   [Outcome](concepts/outcome.md), [Journal and replay](concepts/journal.md).
 - [AI agents](agents.md) and the [MCP server](mcp.md) (`id42-work[mcp]`).
+  `id42-work approvals` decides outside that server.
 - [Storage](storage.md): memory, SQLite or PostgreSQL, migrations, claims, crash recovery.
 - [Architecture](architecture.md): module map, runtime order, deviations from the
   specification.

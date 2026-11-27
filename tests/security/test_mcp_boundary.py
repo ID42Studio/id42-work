@@ -29,7 +29,7 @@ from id42_work import (
 from id42_work.contracts import ValidationContext, Validator
 from id42_work.mcp import McpCallError
 from id42_work.mcp.server import WorkMcpServer
-from mcp_support import hosted
+from mcp_support import greeting_server, hosted
 
 
 class PayInput(BaseModel):
@@ -243,3 +243,31 @@ async def test_another_actors_execution_stays_hidden() -> None:
     assert stored.status is ExecutionStatus.COMPLETED
     visible = await server.list_executions()
     assert visible["executions"] == []
+
+
+_DECISION_TOOLS = ("approve", "reject", "decide", "grant_approval", "approve_execution")
+
+
+@pytest.mark.asyncio
+async def test_the_mcp_surface_has_no_decision_tool() -> None:
+    server, _runner, _provider = greeting_server()
+    tools = await server.server.list_tools()
+    names = {tool.name for tool in tools}
+    assert names == {
+        "list_works",
+        "start_execution",
+        "get_execution",
+        "resume_execution",
+        "list_executions",
+        "cancel_execution",
+    }
+    assert names.isdisjoint(set(_DECISION_TOOLS))
+    assert "host_actor" not in names
+    assert "runner" not in names
+    assert "authority" not in names
+    for name in _DECISION_TOOLS:
+        with pytest.raises(ToolError, match="Unknown tool"):
+            await server.server.call_tool(name, {"approval_id": "x", "reason": "no"})
+    instructions = getattr(server.server, "instructions", "")
+    assert isinstance(instructions, str)
+    assert "cannot approve" in instructions

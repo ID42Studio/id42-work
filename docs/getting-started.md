@@ -34,7 +34,15 @@ no credentials are needed. `sqlite_resume.py` writes a temporary SQLite file.
 `postgres_resume.py` needs the `postgres` extra and a server that can create a
 database. See [Storage](storage.md) to choose a backend. `mcp_greeting.py` needs
 the `mcp` extra. [MCP server](mcp.md) shows how to serve that factory to a client,
-including nanobot 0.4.2 as used by id42-agent.
+including nanobot 0.4.2 as used by id42-agent. The same factory decides approvals
+from the command line, outside the client:
+
+```bash
+id42-work approvals list --factory examples.mcp_greeting:server
+```
+
+`examples/mcp_greeting.py` does not request an approval, so the list is empty.
+[Approval](concepts/approval.md) shows a factory that does.
 
 ## The five pieces you wire
 

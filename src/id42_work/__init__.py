@@ -6,6 +6,12 @@ from typing import TYPE_CHECKING
 
 from id42_work.actors import ActorAuthority, TrustedActor
 from id42_work.approvals import Approval, ApprovalStatus
+from id42_work.approvals.console import (
+    ApprovalConsole,
+    ApprovalDecision,
+    ApprovalResumeError,
+    ApprovalSnapshot,
+)
 from id42_work.approvals.manager import ApprovalManager
 from id42_work.contracts import (
     CapabilityProvider,
@@ -94,6 +100,8 @@ __all__ = [
     "TRANSITIONS",
     "ActorAuthority",
     "Approval",
+    "ApprovalConsole",
+    "ApprovalDecision",
     "ApprovalError",
     "ApprovalExpiredError",
     "ApprovalGate",
@@ -102,6 +110,8 @@ __all__ = [
     "ApprovalRejectedError",
     "ApprovalRequiredError",
     "ApprovalRequirement",
+    "ApprovalResumeError",
+    "ApprovalSnapshot",
     "ApprovalStatus",
     "AutonomyLevel",
     "CapabilityCall",

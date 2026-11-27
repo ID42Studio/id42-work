@@ -1,8 +1,19 @@
-"""Command line entry point. MCP support loads only for ``mcp serve``."""
+"""Command line entry point.
+
+``mcp serve`` and ``approvals`` load the MCP extra themselves. Importing this
+module does not import it.
+"""
+
+from __future__ import annotations
 
 import argparse
+import asyncio
 import sys
 from collections.abc import Sequence
+
+from id42_work.approvals.commands import format_decision
+from id42_work.approvals.console import ApprovalResumeError
+from id42_work.exceptions import WorkError
 
 
 def main(argv: Sequence[str] | None = None) -> None:
@@ -39,6 +50,58 @@ def build_parser() -> argparse.ArgumentParser:
         help="Port for --http (default 8766). Refused without --http",
     )
     serve.set_defaults(handler=_serve)
+    approvals = commands.add_parser(
+        "approvals",
+        help="List and decide approvals as an operator. Not an MCP tool.",
+        description="List and decide approvals as an operator. Not an MCP tool.",
+    )
+    sub = approvals.add_subparsers(dest="approvals_command", required=True)
+    factory = argparse.ArgumentParser(add_help=False)
+    factory.add_argument(
+        "--factory",
+        required=True,
+        help="module:callable that returns a WorkMcpServer, the same contract as mcp serve",
+    )
+    listing = sub.add_parser(
+        "list", parents=[factory], help="List approvals that are still waiting"
+    )
+    listing.set_defaults(handler=_approvals)
+    show = sub.add_parser(
+        "show", parents=[factory], help="Show one approval, including its preview"
+    )
+    show.add_argument("approval_id", help="Approval UUID")
+    show.set_defaults(handler=_approvals)
+    approve = sub.add_parser(
+        "approve",
+        parents=[factory],
+        help="Grant an approval. Resume only when --resume is set",
+    )
+    approve.add_argument("approval_id", help="Approval UUID")
+    approve.add_argument(
+        "--actor",
+        required=True,
+        help="Operator actor id. Sealed with only the approval's reviewer grant",
+    )
+    approve.add_argument("--reason", default=None, help="Reason recorded on the decision")
+    approve.add_argument(
+        "--resume",
+        action="store_true",
+        help="After the grant, resume as the factory's host actor, not as the operator",
+    )
+    approve.set_defaults(handler=_approvals)
+    reject = sub.add_parser(
+        "reject",
+        parents=[factory],
+        help="Reject an approval. The execution ends REJECTED",
+    )
+    reject.add_argument("approval_id", help="Approval UUID")
+    reject.add_argument(
+        "--actor",
+        required=True,
+        help="Operator actor id. Sealed with only the approval's reviewer grant",
+    )
+    reject.add_argument("--reason", required=True, help="Why the approval was rejected")
+    reject.set_defaults(handler=_approvals)
     return parser
 
 
@@ -69,4 +132,35 @@ def _serve(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 2
     serve(server, http=args.http, port=port)
+    return 0
+
+
+def _approvals(args: argparse.Namespace) -> int:
+    try:
+        from id42_work.mcp._dependency import require_mcp  # noqa: PLC0415
+
+        require_mcp()
+        from id42_work.mcp.server import load_factory  # noqa: PLC0415
+    except ImportError as exc:
+        print(exc, file=sys.stderr)
+        return 1
+    try:
+        server = load_factory(args.factory)
+    except (ImportError, AttributeError, ValueError, TypeError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    from id42_work.approvals.commands import run_approval  # noqa: PLC0415
+
+    try:
+        asyncio.run(run_approval(server, args))
+    except ApprovalResumeError as exc:
+        print(format_decision("approved", exc.decision))
+        print(f"id42-work: {exc}", file=sys.stderr)
+        return 1
+    except WorkError as exc:
+        print(f"id42-work: {exc}", file=sys.stderr)
+        return 1
+    except ValueError as exc:
+        print(f"id42-work: {exc}", file=sys.stderr)
+        return 2
     return 0

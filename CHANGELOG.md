@@ -9,6 +9,14 @@ the public API; breaking changes are listed explicitly.
 
 ### Added
 
+- `id42-work approvals list|show|approve|reject --factory module:callable` decides
+  a waiting approval as an operator. The factory is the same contract as
+  `mcp serve`. The operator is sealed by that factory's authority, in the
+  execution's tenant, with only the approval's reviewer grant, and must not be
+  the execution's actor. The reason and the actor are stored on the approval and
+  on `APPROVAL_DECISION` evidence. `--resume` continues the execution as the
+  factory's host actor. Rejection ends the execution `REJECTED`. The MCP server
+  still has no approve or reject tool. See `docs/concepts/approval.md`.
 - MCP server: optional extra `mcp` (`pip install "id42-work[mcp]"`). `id42_work.mcp`
   serves governed execution to MCP clients over stdio, or over streamable HTTP on
   `127.0.0.1`. Tools start, inspect, resume, list and cancel executions of

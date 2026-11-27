@@ -280,7 +280,9 @@ Details, module map and every deviation from the specification are in
 No dates are committed. SQLite, PostgreSQL, cross-process resume claims, recovery
 from a crash during `VALIDATING`, the PydanticAI agent integration, and an MCP
 server (`id42-work[mcp]`) are in the tree. The MCP server starts governed
-executions; it does not expose capabilities as tools. Still open: reconciliation
+executions; it does not expose capabilities as tools and it cannot approve.
+`id42-work approvals` decides as a separate operator, using the same factory.
+Still open: reconciliation
 tooling, a LangGraph adapter, an Odoo 18 connector package, and workflow
 composition. See [docs/roadmap.md](docs/roadmap.md) and [docs/mcp.md](docs/mcp.md).
 
