@@ -267,7 +267,9 @@ Details, module map and every deviation from the specification are in
 - `MemoryStorage` is in-memory. `SqliteStorage` persists to a file.
   `PostgresStorage` (`id42-work[postgres]`) persists to PostgreSQL. Both resume
   after a restart, including a crash during `VALIDATING`, and a claim stops two
-  live processes from driving one execution. See `docs/storage.md`.
+  live processes from driving one execution. Authority keys stay in process
+  memory unless `ActorAuthority` is given a key file. See `docs/storage.md`
+  and `docs/security.md`.
 - Capability enforcement covers calls made through the SDK. It cannot stop arbitrary
   Python code in the same process from calling external systems directly.
 - The SDK cannot guarantee exactly-once external side effects. Uncertain results are

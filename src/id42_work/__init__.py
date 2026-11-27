@@ -13,6 +13,12 @@ from id42_work.approvals.console import (
     ApprovalSnapshot,
 )
 from id42_work.approvals.manager import ApprovalManager
+from id42_work.authority_keys import (
+    AuthorityKeyStore,
+    AuthoritySigningKey,
+    FileAuthorityKeyStore,
+    authority_key_path_from_env,
+)
 from id42_work.contracts import (
     CapabilityProvider,
     ExecutionContext,
@@ -30,6 +36,7 @@ from id42_work.exceptions import (
     ApprovalNotAllowedError,
     ApprovalRejectedError,
     ApprovalRequiredError,
+    AuthorityKeyError,
     CapabilityDeniedError,
     ConcurrentModificationError,
     ExecutionCancelledError,
@@ -123,6 +130,9 @@ __all__ = [
     "ApprovalResumeError",
     "ApprovalSnapshot",
     "ApprovalStatus",
+    "AuthorityKeyError",
+    "AuthorityKeyStore",
+    "AuthoritySigningKey",
     "AutonomyLevel",
     "CapabilityCall",
     "CapabilityDeniedError",
@@ -143,6 +153,7 @@ __all__ = [
     "ExecutionLimits",
     "ExecutionStatus",
     "Executor",
+    "FileAuthorityKeyStore",
     "IdempotencyConflictError",
     "InputValidationError",
     "InvalidStateTransitionError",
@@ -188,4 +199,5 @@ __all__ = [
     "WorkRegistry",
     "WorkRunner",
     "__version__",
+    "authority_key_path_from_env",
 ]

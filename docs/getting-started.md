@@ -56,7 +56,9 @@ id42-work approvals list --factory examples.mcp_greeting:server
 4. **A `PolicyResolver`**: the host's rules. `StaticPolicyResolver` maps
    `(work_id, version)` to a `Policy`, with optional per-tenant overrides.
 5. **An `ActorAuthority`**: after your application authenticates a user or service,
-   it calls `authority.issue(...)` to get a sealed `TrustedActor`.
+   it calls `authority.issue(...)` to get a sealed `TrustedActor`. The default key
+   lives in that process. Pass `key_path=` when a restarted process must verify
+   the same seals. See [Security](security.md).
 
 Then:
 

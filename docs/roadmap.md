@@ -29,6 +29,10 @@ Done:
   id. An operator decides with `id42-work reconcile` (`applied`, `not-applied`,
   `abandon`), under `reconcile:<work_id>`. The MCP server has no reconcile tool.
   See [Reconciliation](concepts/reconciliation.md).
+- Durable `ActorAuthority` keys. A host-named file (mode `0600`) reloads the
+  signing key after a restart, and `rotate_keys` keeps older keys for
+  verification. The execution database does not hold the key. See
+  [Security](security.md).
 
 Still open:
 

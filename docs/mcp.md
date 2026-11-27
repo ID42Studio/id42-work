@@ -81,7 +81,12 @@ def server() -> WorkMcpServer:
 ```
 
 `issue` calls `authority.issue(...)` and returns a `TrustedActor`. Keep the
-authority, the runner and the factory in the host process.
+authority, the runner and the factory in the host process. Pass the same
+`key_path` into `ActorAuthority` when `id42-work approvals` or
+`id42-work reconcile` must verify a seal issued by an earlier process. The
+constructor does not read the environment; the host reads
+`ID42_WORK_AUTHORITY_KEY_PATH` with `authority_key_path_from_env` and passes
+that path. See [Security](security.md).
 
 ```bash
 id42-work mcp serve --factory myapp.governed:server

@@ -31,6 +31,7 @@ HIERARCHY = {
     "ConcurrentModificationError": "StorageError",
     "ReconciliationError": "WorkError",
     "ReconciliationNotAllowedError": "ReconciliationError",
+    "AuthorityKeyError": "WorkError",
 }
 
 

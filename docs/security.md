@@ -34,9 +34,10 @@ The SDK defends against:
   capabilities, and only if every one of them is in the actor's grants, in the
   policy's allowed set, in the per-call constraints (when given), and offered by a
   registered provider.
-- **Sealed identities.** A `TrustedActor` is HMAC-sealed by an `ActorAuthority` whose
-  random key lives only in memory and cannot be pickled. Strings, dicts, modified,
-  expired, deserialized or foreign actors are refused.
+- **Sealed identities.** A `TrustedActor` is HMAC-sealed by an `ActorAuthority`.
+  The default key is random, lives only in that process, and cannot be pickled.
+  A host can instead pass `key_path` so the same keys are loaded after a restart.
+  Strings, dicts, modified, expired, deserialized or foreign actors are refused.
 - **Exact approvals.** Approvals bind to a digest of the execution, the definition,
   the gate, the action and its canonical parameters. A changed parameter invalidates
   the approval. Reviewers must hold the gate's grant, belong to the same tenant and
@@ -105,6 +106,44 @@ another machine needs stdio in the same process, or a tunnel the host operates.
 The server does not add authentication of its own: anyone who can speak to the
 process can act as the host actor the factory issues.
 
+## Authority keys
+
+`ActorAuthority("host-app")` still generates a new in-memory key. That key dies
+with the process. Pass a file when a later process must accept seals from this
+one, including a reviewer credential checked by `id42-work approvals` or
+`id42-work reconcile` after the MCP server has exited:
+
+```python
+from pathlib import Path
+from id42_work import ActorAuthority, authority_key_path_from_env
+
+path = authority_key_path_from_env() or Path("/var/lib/id42-work/authority.keys")
+authority = ActorAuthority("host-app", key_path=path, create_key_file=True)
+```
+
+The constructor does not read the environment. `authority_key_path_from_env`
+reads `ID42_WORK_AUTHORITY_KEY_PATH` and accepts only an absolute path. Create
+the directory yourself, mode `0700`, before the first process. The key file is
+created mode `0600`. A symlink, a file that grants access to group or other, and
+a world-writable directory are refused. Writes are atomic. Nothing in the SDK
+logs or prints the key bytes.
+
+`rotate_keys()` retires the current key and signs later actors with a new one.
+Seals made by the retired key still verify when the actor was issued at or
+before that retirement and its lifetime is within `max_ttl`. Every process that
+shares the file must use the same `max_ttl`. Do not rotate from two processes at
+once if they are not on a filesystem that honors the lock file beside the keys.
+
+`actor.to_credential()` is the seal-bearing token. It is not `model_dump`: the
+model JSON omits the seal. `TrustedActor.from_credential` only parses.
+`authority.verify` is still what makes the actor trusted. The token is a bearer
+credential. Keep it as private as the key file.
+
+Approval and reconciliation records are not signed again. They stay in the
+execution database, which is trusted host storage. The key file lets a new
+process verify the reviewer who was allowed to decide; it does not detect a
+change to a row in that database.
+
 ## Limitations
 
 **In-process trust.** The SDK cannot sandbox Python. Code running in the same process
@@ -150,7 +189,9 @@ and a new side effect or a missing record is refused. A resume claim
 stops a second live process from driving the same execution: a SQLite lease row, or
 a PostgreSQL session advisory lock that ends when the connection closes. There is
 no distributed transaction with the external system. The database is trusted host
-storage. Actor seals are not in it; the host issues new actors after a restart.
+storage. Actor seals and authority keys are not in it. Without a key file the
+host issues new actors after a restart. With `key_path`, a later process loads
+the same keys and can verify a credential the host kept. See below.
 
 **What the records may contain.**
 

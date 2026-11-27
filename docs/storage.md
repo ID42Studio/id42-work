@@ -110,9 +110,12 @@ output models at module level, not inside a function. A class defined in the scr
 that is running (`__main__`) is found in that process. The database is trusted host
 storage. It replaces process memory; it is not a place to load untrusted code from.
 
-`ActorAuthority` keys are still random and stay in memory. After a restart the host
-issues new actors. The execution stores the actor id, not the seal, so a new actor
-with the same id and tenant can resume.
+`ActorAuthority` keys are not stored in this database. The default authority
+still generates a random in-memory key, and the execution stores the actor id,
+not the seal, so a new actor with the same id and tenant can resume. A host that
+must verify a seal from the previous process passes `key_path` to
+`ActorAuthority`. That file is separate from the database, mode `0600`. See
+[Security](security.md).
 
 ## Migrations
 
