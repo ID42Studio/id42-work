@@ -310,6 +310,36 @@ class ExecutionRecorder:
             error=info,
         )
 
+    async def revise_execution(
+        self,
+        execution: Execution,
+        event_type: EventType,
+        payload: dict[str, JsonValue],
+        **changes: object,
+    ) -> Execution:
+        """Store field changes that keep the status, together with one event.
+
+        Used when reconciliation abandons a call: the execution stays ``FAILED``
+        and ``requires_reconciliation`` is cleared. A status change goes through
+        :meth:`transition` instead.
+        """
+        eid = execution.execution_id
+        if "status" in changes:
+            msg = "revise_execution cannot change status"
+            raise StorageError(msg, execution_id=eid)
+
+        async def revise(sequence: int) -> Execution:
+            return execution.model_copy(
+                update={
+                    **changes,
+                    "revision": execution.revision + 1,
+                    "updated_at": max(self.now(), execution.updated_at),
+                    "last_event_sequence": sequence,
+                }
+            )
+
+        return await self._commit_with_event(execution, event_type, payload, revise, create=False)
+
     async def emit(
         self, execution: Execution, event_type: EventType, payload: dict[str, JsonValue]
     ) -> WorkEvent:

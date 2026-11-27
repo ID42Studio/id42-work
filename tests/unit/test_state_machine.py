@@ -20,6 +20,7 @@ from id42_work.states import can_transition
 S = ExecutionStatus
 
 # Specification 4.1, transcribed independently from the implementation's table.
+# D51 adds the two reopen edges. They are not in the specification.
 SPEC_TABLE: set[tuple[ExecutionStatus, ExecutionStatus]] = {
     (S.CREATED, S.POLICY_CHECK),
     (S.POLICY_CHECK, S.DENIED),
@@ -42,8 +43,13 @@ SPEC_TABLE: set[tuple[ExecutionStatus, ExecutionStatus]] = {
     (S.WAITING_APPROVAL, S.CANCELLED),
     (S.WAITING_REVIEW, S.CANCELLED),
 }
+D51_REOPEN: set[tuple[ExecutionStatus, ExecutionStatus]] = {
+    (S.FAILED, S.READY),
+    (S.VALIDATION_FAILED, S.READY),
+}
+ALLOWED = SPEC_TABLE | D51_REOPEN
 ALL_PAIRS = list(product(S, S))
-FORBIDDEN = [pair for pair in ALL_PAIRS if pair not in SPEC_TABLE]
+FORBIDDEN = [pair for pair in ALL_PAIRS if pair not in ALLOWED]
 EID = UUID("00000000-0000-4000-8000-000000000001")
 
 
@@ -71,18 +77,23 @@ def changes_for(target: ExecutionStatus) -> dict[str, Any]:
     return {}
 
 
-def test_table_matches_specification() -> None:
+def test_table_matches_specification_plus_reconciliation() -> None:
     implemented = {(a, b) for a, targets in TRANSITIONS.items() for b in targets}
-    assert implemented == SPEC_TABLE
+    assert implemented == ALLOWED
+    assert implemented - SPEC_TABLE == D51_REOPEN
     assert set(TRANSITIONS) == set(S)
 
 
 def test_terminal_states_have_no_exits() -> None:
     for status in S:
-        assert (not TRANSITIONS[status]) == status.is_terminal
+        if status in {S.FAILED, S.VALIDATION_FAILED}:
+            assert status.is_terminal
+            assert TRANSITIONS[status] == frozenset({S.READY})
+        else:
+            assert (not TRANSITIONS[status]) == status.is_terminal
 
 
-@pytest.mark.parametrize(("source", "target"), sorted(SPEC_TABLE, key=str))
+@pytest.mark.parametrize(("source", "target"), sorted(ALLOWED, key=str))
 def test_allowed_transitions(source: ExecutionStatus, target: ExecutionStatus) -> None:
     record = in_status(source)
     at = T0 + timedelta(seconds=5)

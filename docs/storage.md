@@ -150,11 +150,13 @@ next time it is opened. Adding a migration later means appending a new version i
   journal. Resume rebuilds the output and runs the validators again. It continues
   only when no live claim still holds the execution.
 
-If a capability call is still `IN_FLIGHT`, resume marks each such entry `UNCERTAIN`,
-emits `work.action.uncertain`, and moves the execution to `FAILED` with
-`requires_reconciliation`. The provider is not called again. That is the case the
-specification describes: the process died during the call, the external system may
-already have accepted it, and the SDK does not retry. A `context.record` left
+If a capability call is still `IN_FLIGHT`, resume probes it when the provider
+defines `reconcile`. `APPLIED` is journaled `SUCCEEDED` and replayed. `NOT_APPLIED`
+is retried with the same operation id. Otherwise resume marks the entry
+`UNCERTAIN`, emits `work.action.uncertain`, and moves the execution to `FAILED`
+with `requires_reconciliation`. `invoke` is not called for a call that stayed
+unresolved. That is the case the specification describes: the process died during
+the call, and the external system may already have accepted it. A `context.record` left
 `IN_FLIGHT` is not one of those calls. Its result was never returned to the executor,
 so resume computes it again and replays capability calls it already completed. A
 journal update writes the status and the body in one transaction, so a crash cannot
@@ -250,7 +252,9 @@ process reserved it.
 
 - **Exactly-once is still impossible.** A crash after the external system accepted a
   capability call and before the journal moved from `IN_FLIGHT` to `SUCCEEDED` is
-  `UNCERTAIN`. Reconcile with the operation id. The SDK will not retry that call.
+  `UNCERTAIN` unless a provider probe can prove otherwise. `NOT_APPLIED` is the
+  only result that retries the same operation id. See
+  [Reconciliation](concepts/reconciliation.md).
 - **SQLite serializes writers.** Many processes may read. A writer waits up to
   `timeout`, then SQLite raises. The SDK wraps open failures as `StorageError`.
 - **A hung SQLite process can be stolen after `resume_claim_ttl`.** PostgreSQL does
@@ -258,5 +262,6 @@ process reserved it.
 - **Validation recovery does not repeat a finished side effect.** The output is
   rebuilt from the journal. A new side effect is refused. Read-only validator calls
   may run again, because they are not journaled.
-- **No reconciliation tool.** Uncertain actions are recorded. Comparing them with the
-  external system is the host's job.
+- **Reconciliation is a separate decision.** `id42-work reconcile` and
+  `ReconciliationConsole` record it. The MCP server has no reconcile tool. An
+  abandoned call stays failed.

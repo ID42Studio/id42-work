@@ -43,6 +43,8 @@ from id42_work.exceptions import (
     OutcomeValidationError,
     PolicyDeniedError,
     PolicyError,
+    ReconciliationError,
+    ReconciliationNotAllowedError,
     StorageError,
     UncertainOutcomeError,
     UntrustedActorError,
@@ -65,6 +67,14 @@ from id42_work.policy import (
 )
 from id42_work.policy.engine import PolicyEngine
 from id42_work.policy.registry import CapabilityRegistry
+from id42_work.reconciliation.console import (
+    ReconciliationConsole,
+    ReconciliationDecision,
+    ReconciliationResumeError,
+    ReconciliationSnapshot,
+)
+from id42_work.reconciliation.models import ReconciliationProbe, ReconciliationVerdict
+from id42_work.reconciliation.service import ReconciliationService
 from id42_work.registry import WorkBinding, WorkRegistry
 from id42_work.runner import WorkRunner
 from id42_work.states import TRANSITIONS, ExecutionStatus
@@ -148,6 +158,15 @@ __all__ = [
     "PolicyError",
     "PolicyResolver",
     "PostgresStorage",
+    "ReconciliationConsole",
+    "ReconciliationDecision",
+    "ReconciliationError",
+    "ReconciliationNotAllowedError",
+    "ReconciliationProbe",
+    "ReconciliationResumeError",
+    "ReconciliationService",
+    "ReconciliationSnapshot",
+    "ReconciliationVerdict",
     "Severity",
     "SqliteStorage",
     "StaticPolicyResolver",

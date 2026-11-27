@@ -156,7 +156,14 @@ class Validator(Protocol):
 
 
 class CapabilityProvider(Protocol):
-    """The only path from executors to external systems through the SDK."""
+    """The only path from executors to external systems through the SDK.
+
+    ``reconcile`` is optional and is not part of this protocol. A provider that can
+    look up an effect by idempotency key defines
+    ``async def reconcile(self, call: CapabilityCall) -> ReconciliationProbe``.
+    Resume calls it when the attribute exists. It must be read-only: it reports
+    whether ``call.operation_id`` was applied, and it does not perform the effect.
+    """
 
     def capabilities(self) -> Iterable[CapabilitySpec]: ...
 

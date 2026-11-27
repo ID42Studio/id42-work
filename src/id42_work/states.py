@@ -22,7 +22,11 @@ class ExecutionStatus(Enum):
 
     @property
     def is_terminal(self) -> bool:
-        """Whether no transition may leave this state."""
+        """Whether this status records a finished time.
+
+        ``FAILED`` and ``VALIDATION_FAILED`` stay finished until reconciliation
+        reopens them. Every other status in ``TERMINAL_STATUSES`` has no exit.
+        """
         return self in TERMINAL_STATUSES
 
 
@@ -48,8 +52,9 @@ TRANSITIONS: dict[ExecutionStatus, frozenset[ExecutionStatus]] = {
     _S.VALIDATING: frozenset({_S.VALIDATION_FAILED, _S.WAITING_REVIEW, _S.COMPLETED}),
     _S.WAITING_REVIEW: frozenset({_S.COMPLETED, _S.REJECTED, _S.CANCELLED}),
     _S.DENIED: frozenset(),
-    _S.FAILED: frozenset(),
-    _S.VALIDATION_FAILED: frozenset(),
+    # D51: a reconciled uncertain failure may run again. Nothing else may leave.
+    _S.FAILED: frozenset({_S.READY}),
+    _S.VALIDATION_FAILED: frozenset({_S.READY}),
     _S.COMPLETED: frozenset(),
     _S.REJECTED: frozenset(),
     _S.CANCELLED: frozenset(),
@@ -58,7 +63,9 @@ TRANSITIONS: dict[ExecutionStatus, frozenset[ExecutionStatus]] = {
 
 Business guards (e.g. ``WAITING_APPROVAL -> READY`` needs a granted approval) are
 enforced by the runner and the approval manager; this table only fixes which
-transitions can exist at all.
+transitions can exist at all. ``FAILED -> READY`` and ``VALIDATION_FAILED -> READY``
+exist only so reconciliation can continue an execution that was waiting on an
+uncertain capability call (D51).
 """
 
 

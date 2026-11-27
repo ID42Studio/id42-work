@@ -34,8 +34,9 @@ Resources, all `application/json`:
 - `id42://executions/{execution_id}/evidence`
 - `id42://executions/{execution_id}/approvals`
 
-There is no approve or reject tool. `id42-work approvals` is a separate command,
-not a tool on this server. Extra arguments such as `actor_id` or `grants` are
+There is no approve, reject or reconcile tool. `id42-work approvals` and
+`id42-work reconcile` are separate commands, not tools on this server. Extra
+arguments such as `actor_id` or `grants` are
 ignored. Amounts that the work schema types as `Decimal` must be JSON strings.
 A float would change the action digest.
 
@@ -58,7 +59,9 @@ providers, and it issues the actor.
   returns `WAITING_APPROVAL` or `WAITING_REVIEW` and does not wait for the person.
   `resume_execution` does not decide. The host approves or rejects with
   `id42-work approvals` or `ApprovalConsole`, outside the MCP server, then the
-  client may resume. The operator is a different actor from the one this server
+  client may resume. An `UNCERTAIN` capability call is reconciled the same way,
+  with `id42-work reconcile` or `ReconciliationConsole`. `resume_execution` does
+  not mark it applied. The operator is a different actor from the one this server
   issues.
 - Journal results pass through the default redactor. Approval parameter previews
   and action digests are omitted. Events and evidence are the records the runner

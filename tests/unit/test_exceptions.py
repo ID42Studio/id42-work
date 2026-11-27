@@ -29,6 +29,8 @@ HIERARCHY = {
     "OutcomeValidationError": "OutcomeError",
     "StorageError": "WorkError",
     "ConcurrentModificationError": "StorageError",
+    "ReconciliationError": "WorkError",
+    "ReconciliationNotAllowedError": "ReconciliationError",
 }
 
 

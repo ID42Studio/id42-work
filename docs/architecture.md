@@ -23,6 +23,9 @@ specification requires (section 5 and 26).
 | `id42_work.runner` | `WorkRunner` (public entry point): `run`, `resume`, `cancel`, `expire_due`, `list_executions`, `registered_works` and sync variants |
 | `id42_work.approvals.manager` | `ApprovalManager`: `list_pending`, `approve`, `reject`, `expire_due` |
 | `id42_work.approvals.console` | `ApprovalConsole`: host decisions as an operator, with an optional resume |
+| `id42_work.reconciliation` | Verdicts and the optional provider probe (`ReconciliationProbe`) |
+| `id42_work.reconciliation.service` | `ReconciliationService`: probe and operator decisions, journal compare-and-set |
+| `id42_work.reconciliation.console` | `ReconciliationConsole`: host decisions as an operator, with an optional resume |
 | `id42_work.context` | `RunContext`, `ValidatorContext` (the contexts handed to user code) |
 | `id42_work._invoker` | Capability calls: checks, journal, replay, ACTION gates, provider calls (internal) |
 | `id42_work._recorder` | Transitions, events, evidence, journal settlement, approval gates (internal) |
@@ -35,7 +38,7 @@ specification requires (section 5 and 26).
 | `id42_work.storage.codec` | JSON round-trip for records, inputs and outcome models (internal) |
 | `id42_work.agents` | Framework-neutral agent tools: `agent_tools`, `tool_action_id`, `to_params`, `call_tool` |
 | `id42_work.integrations.pydantic_ai` | `capability_toolset`, `capability_tools`, `RecordedModel` (extra `pydantic-ai`) |
-| `id42_work.cli` | `id42-work` command. `mcp serve` and `approvals` load the MCP extra |
+| `id42_work.cli` | `id42-work` command. `mcp serve`, `approvals` and `reconcile` load the MCP extra |
 | `id42_work.mcp` | `WorkMcpServer` (extra `mcp`): tools and resources over `WorkRunner` |
 | `id42_work.testing` | `FakeOdooProvider`, `ManualClock`; `testing.contract.StorageContractSuite` (needs pytest) |
 | `id42_work.execution` | `Execution`, `ExecutionErrorInfo` |
@@ -127,13 +130,16 @@ inconsistent record:
 | D48 | 4.1, 5.8 and 9: a crash during `VALIDATING` | `resume` replays the executor to rebuild the output and runs the validators again under `execution_limits.timeout`. Journaled capability calls are not performed again. A stored `context.record`, including a `RecordedModel` response, is returned from the journal and `compute` is not called. A missing record, a different fingerprint, or a record with no stored result fails closed and is not computed. There is no second `VALIDATING` transition and no second `work.outcome.validation_started`. A policy denial, an `IN_FLIGHT` or `UNCERTAIN` capability call, a `PENDING_APPROVAL` action, or a replay that is not a pure replay ends `VALIDATION_FAILED`. An `IN_FLIGHT` capability call is still marked `UNCERTAIN`, and `requires_reconciliation` is stored on the error. An `IN_FLIGHT` record is not marked `UNCERTAIN`. The replay has its own timeout budget, separate from validation, as the first run does (D39). | The output is not stored until validation finishes. Validators are read-only and must be idempotent (spec 9), so running them again does not repeat the side effect. A model response is already in the journal (D44), so calling the provider again would not be a replay. The transition table has no `VALIDATING -> FAILED`, `VALIDATING -> DENIED` or `VALIDATING -> VALIDATING`. |
 | D49 | 2.2: the SDK is a library, not a hosted service. 5.5: runner reads are `get`, `events` and `evidence`. 12.1: `ExecutionRepository` has no list. | Optional extra `mcp` serves a Model Context Protocol server on stdio, or on streamable HTTP bound to `127.0.0.1`. Tools are `list_works`, `start_execution`, `get_execution`, `resume_execution`, `list_executions` and `cancel_execution`. Resources are the journal, events, evidence and approvals of one execution. The client cannot pass an actor, a grant or an approval decision. `ExecutionRepository.list` returns every stored execution, ordered by creation time then id. `WorkRunner.list_executions` exposes that list with no actor filter. `WorkRunner.registered_works` returns the registered definitions. The MCP server then keeps only executions whose actor id and tenant match the host actor. | Exposing capabilities as tools would skip the executor and the validators. The server calls `WorkRunner`, so policies, gates and validation stay in force. Listing executions needs a scan the storage protocols did not have. The list reads the existing executions table and needs no schema migration. |
 | D50 | 5.8 and 7: a host decides with `ApprovalManager` inside its own process. 2.2: the SDK is not a service. D49: the MCP client cannot decide. | `ApprovalConsole` and `id42-work approvals list`, `show`, `approve` and `reject` load the same `module:callable` factory as `mcp serve`. The command seals an operator through that factory's `ActorAuthority`, in the execution's tenant, with only the approval's `reviewer_capability` (by default `approve:<work_id>`). The operator id is explicit and must differ from the execution actor. The reason and the actor are stored on the approval and on `APPROVAL_DECISION` evidence (`reason` plus the existing `reason_provided` and `decision_actor_id`). `--resume` continues the execution as the factory's host actor, not as the operator. Rejection ends the execution `REJECTED`. A missing grant, a decision that is no longer pending, and an execution that is not waiting for that gate are refused before a second write. Concurrent decisions keep the approval compare-and-set. No approve or reject tool is added. | Hosts were writing their own scripts because the model must not approve its own requests. The command is a separate process from the MCP server. The action journal is unchanged: a decision is not a capability call. |
+| D51 | 4.1: `FAILED` and `VALIDATION_FAILED` are terminal. 5.8 and 8.3: an `IN_FLIGHT` capability call becomes `UNCERTAIN` and the SDK never retries. 8.1: journal statuses stop at `UNCERTAIN`. | `FAILED -> READY` and `VALIDATION_FAILED -> READY` exist only so a reconciled execution can continue. Both statuses stay terminal for `finished_at` until that transition. Journal gains `NOT_APPLIED` (retry the same `operation_id`) and `ABANDONED` (terminal for that call; the error is required). No schema migration: status is text in the journal body. A provider may define `async reconcile(self, call) -> ReconciliationProbe`. It is not a method of the `CapabilityProvider` protocol. `resume` calls it for `IN_FLIGHT` calls while recovering `RUNNING`, and for remaining `IN_FLIGHT` or `UNCERTAIN` capability calls when `FAILED` or `VALIDATION_FAILED` still has `requires_reconciliation`. `APPLIED` journals `SUCCEEDED` and is replayed. `NOT_APPLIED` is retried with the same operation id when the capability and parameter digest match. `UNKNOWN`, a missing hook, a probe error, or a non-JSON applied result leaves the call unresolved and does not call `invoke`. The first resume of a crash during `VALIDATING` still marks `IN_FLIGHT` `UNCERTAIN` without probing; the next resume of `VALIDATION_FAILED` probes. An operator decides through `ReconciliationConsole` or `id42-work reconcile list`, `show`, `applied`, `not-applied` and `abandon`, using the same factory as `mcp serve`. The operator is sealed with only `reconcile:<work_id>`, in the execution's tenant, and must differ from the execution actor. Applied records the supplied outcome (JSON null is allowed). Not applied allows the retry. Abandon clears `requires_reconciliation` and leaves the execution `FAILED` (`reconciliation_abandoned`). Each decision writes `RECONCILIATION_DECISION` evidence with the actor and the reason, and emits `work.action.reconciled`. A second decision and a decision beside a live resume write nothing. The journal compare-and-set is the lock on SQLite and PostgreSQL; the resume claim keeps the decision off a live `resume`. No reconcile tool is added to the MCP server. | The execution was stuck: a provider that cannot prove a write will not repeat it, and recovery had no way to record what an operator found. The probe is optional so existing providers stay valid. The two new transitions are guarded by the runner; a normal failure does not leave `FAILED`. |
 
 The M3 note on expiry is resolved: an expired PENDING approval cancels its execution
 (reason `approval_expired`), as specification 7.5 requires. An expired GRANTED approval
 is retired, and the next `resume` requests a new one.
 
 Grant format: a grant is either a capability name, `approve:<capability-or-work-id>`,
-`resume:<work-id>` or `cancel:<work-id>`. No other prefixes are accepted.
+`resume:<work-id>`, `cancel:<work-id>` or `reconcile:<work-id>`. No other prefixes
+are accepted. A grant is at most 138 characters, which fits `reconcile:` plus a
+work id of 128 characters.
 
 Schema references in `WorkDescriptor` use `module:qualname`. Classes defined inside
 functions are accepted, but their references are not importable.
@@ -256,9 +262,12 @@ is at version 1; its resume claim is a session advisory lock, not a row. See
 1. The definition digest and the stored input are checked, as for a `READY` resume.
 2. The resume claim is taken (D31). If another driver holds it, the execution is
    returned unchanged.
-3. If the journal has an `IN_FLIGHT` capability call, each one is marked `UNCERTAIN`
-   and the execution fails with `requires_reconciliation`. The executor does not run.
-   A `context.record` left `IN_FLIGHT` is not marked uncertain.
+3. Each `IN_FLIGHT` capability call is probed when its provider defines `reconcile`
+   (D51). `APPLIED` is journaled `SUCCEEDED` and replayed. `NOT_APPLIED` is retried
+   with the same operation id. Anything else is marked `UNCERTAIN` and the
+   execution fails with `requires_reconciliation`. The provider's `invoke` is not
+   called for a call that stayed unresolved. A `context.record` left `IN_FLIGHT`
+   is not marked uncertain.
 4. Otherwise the policy is evaluated again. A denial fails the execution. An
    allowance replays the executor from the start without repeating `SUCCEEDED`
    actions and without transitioning `RUNNING -> RUNNING`. An `IN_FLIGHT` record is
@@ -287,13 +296,18 @@ is at version 1; its resume claim is a session advisory lock, not a row. See
    `VALIDATION_FAILED`, `WAITING_REVIEW` or `COMPLETED`. That transition and its
    event are one commit. `work.outcome.validation_started` is not emitted again.
 
-A reconciliation tool for uncertain side effects is still open.
+`resume` of a `FAILED` or `VALIDATION_FAILED` execution that still requires
+reconciliation (D51) probes the remaining capability calls under the same claim.
+When every one is settled and none was abandoned, the execution moves to `READY`
+and continues. Otherwise it is returned unchanged. See
+[Reconciliation](concepts/reconciliation.md).
 
 ## MCP server
 
 `id42_work.mcp` (extra `mcp`, D49) is a host-configured server over one
 `WorkRunner`. The client starts and inspects executions. Policies, validators and
 approval gates remain inside the runner. The host supplies `ActorAuthority` and
-`issue_actor`; the client cannot choose either. Decisions are `id42-work approvals`
-(D50), which seals a different operator and does not add an MCP tool. See
-[MCP server](mcp.md) and [Approval](concepts/approval.md).
+`issue_actor`; the client cannot choose either. Approval decisions are
+`id42-work approvals` (D50). Uncertain calls are `id42-work reconcile` (D51).
+Neither command adds an MCP tool. See [MCP server](mcp.md),
+[Approval](concepts/approval.md) and [Reconciliation](concepts/reconciliation.md).

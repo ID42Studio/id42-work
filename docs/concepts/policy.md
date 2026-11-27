@@ -41,6 +41,8 @@ to the registry counts as side-effecting.
 
 ## Grants
 
-An actor's grants are capability names plus three prefixed forms:
-`approve:<target>`, `resume:<work_id>` and `cancel:<work_id>`. An approval grant is
-not a capability: `approve:payments.execute` does not allow executing payments.
+An actor's grants are capability names plus four prefixed forms:
+`approve:<target>`, `resume:<work_id>`, `cancel:<work_id>` and
+`reconcile:<work_id>`. An approval grant is not a capability:
+`approve:payments.execute` does not allow executing payments. A reconcile grant
+does not allow the actor to run the work.

@@ -118,6 +118,14 @@ class UncertainOutcomeError(ExecutionError):
     """An external side effect may or may not have happened; reconciliation is required."""
 
 
+class ReconciliationError(WorkError):
+    """A reconciliation decision was refused or could not be stored."""
+
+
+class ReconciliationNotAllowedError(ReconciliationError):
+    """The actor may not reconcile this execution (grant, tenant or self-decision)."""
+
+
 class OutcomeError(WorkError):
     """Base class for outcome failures."""
 
