@@ -19,7 +19,7 @@ import math
 import threading
 from collections.abc import Generator, Sequence
 from datetime import datetime, timedelta
-from typing import Any, LiteralString, Self
+from typing import Any, LiteralString, Self, cast
 from uuid import UUID
 
 import psycopg
@@ -43,7 +43,8 @@ from id42_work.storage.codec import (
     load_input,
     load_record,
 )
-from id42_work.storage.protocols import IdempotencyRecord, IdempotencyScope
+from id42_work.storage.listing import execution_select
+from id42_work.storage.protocols import ExecutionListQuery, IdempotencyRecord, IdempotencyScope
 
 _SCHEMA_VERSION = 1
 _NO_TENANT = ""
@@ -316,10 +317,14 @@ class PostgresExecutionRepository:
             return None
         return load_execution(str(row[0]))
 
-    async def list(self) -> tuple[Execution, ...]:
+    async def list(self, query: ExecutionListQuery | None = None) -> tuple[Execution, ...]:
+        statement, params = execution_select(query, dialect="postgres")
         with self._db.reading() as conn:
-            rows = conn.execute("SELECT body FROM executions").fetchall()
-        return executions_by_age(tuple(load_execution(str(row[0])) for row in rows))
+            rows = conn.execute(cast("LiteralString", statement), params).fetchall()
+        loaded = tuple(load_execution(str(row[0])) for row in rows)
+        if query is None:
+            return executions_by_age(loaded)
+        return loaded
 
     async def compare_and_set(self, updated: Execution) -> None:
         with self._db.transaction() as conn:

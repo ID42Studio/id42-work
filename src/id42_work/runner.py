@@ -69,7 +69,12 @@ from id42_work.policy.registry import CapabilityRegistry
 from id42_work.reconciliation.service import ReconciliationService
 from id42_work.registry import WorkBinding, WorkRegistry
 from id42_work.states import ExecutionStatus
-from id42_work.storage.protocols import IdempotencyRecord, IdempotencyScope, Storage
+from id42_work.storage.protocols import (
+    ExecutionListQuery,
+    IdempotencyRecord,
+    IdempotencyScope,
+    Storage,
+)
 
 _logger = logging.getLogger("id42_work.runner")
 _MAX_REASON = 256
@@ -331,13 +336,16 @@ class WorkRunner:
         """Approvals requested for an execution."""
         return await self._rec.storage.approvals.list_for_execution(execution_id)
 
-    async def list_executions(self) -> tuple[Execution, ...]:
-        """Every execution in storage, ordered by creation time and then by id.
+    async def list_executions(
+        self, query: ExecutionListQuery | None = None
+    ) -> tuple[Execution, ...]:
+        """Executions in storage, ordered by creation time and then by id.
 
-        The result is not filtered by actor. A caller that serves an untrusted client
-        must keep only the executions that client is allowed to see.
+        With no query, every execution is returned and nothing is filtered by actor.
+        A caller that serves an untrusted client must pass a query for that client,
+        or filter this list itself, before handing the rows over.
         """
-        return await self._rec.storage.executions.list()
+        return await self._rec.storage.executions.list(query)
 
     def registered_works(self) -> tuple[Work, ...]:
         """Works currently registered, sorted by id and version. No executable code."""

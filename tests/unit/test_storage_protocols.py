@@ -13,6 +13,7 @@ def test_storage_protocols_are_exported() -> None:
         "ApprovalRepository",
         "EventRepository",
         "EvidenceRepository",
+        "ExecutionListQuery",
         "ExecutionRepository",
         "IdempotencyRecord",
         "IdempotencyRepository",

@@ -23,7 +23,8 @@ from id42_work.execution import Execution
 from id42_work.journal import JournalEntry, JournalStatus
 from id42_work.storage.claims import claim_deadline
 from id42_work.storage.codec import executions_by_age
-from id42_work.storage.protocols import IdempotencyRecord, IdempotencyScope
+from id42_work.storage.listing import page_executions
+from id42_work.storage.protocols import ExecutionListQuery, IdempotencyRecord, IdempotencyScope
 
 
 class MemoryExecutionRepository:
@@ -75,10 +76,12 @@ class MemoryExecutionRepository:
         with self._lock:
             return self._executions.get(execution_id)
 
-    async def list(self) -> tuple[Execution, ...]:
+    async def list(self, query: ExecutionListQuery | None = None) -> tuple[Execution, ...]:
         with self._lock:
             rows = tuple(self._executions.values())
-        return executions_by_age(rows)
+        if query is None:
+            return executions_by_age(rows)
+        return page_executions(rows, query)
 
     async def compare_and_set(self, updated: Execution) -> None:
         with self._lock:

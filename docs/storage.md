@@ -86,10 +86,14 @@ compare-and-set and the lookups use.
 
 - **Executions** are replaced only when the stored revision is the new revision minus
   one. A lost update raises `ConcurrentModificationError` and writes nothing.
-  `ExecutionRepository.list` reads every execution, ordered by creation time then
-  id. It is not filtered by actor. `WorkRunner.list_executions` returns that
-  sequence. The MCP server filters it before a client sees it. No schema change
-  is required.
+  `ExecutionRepository.list()` with no query reads every execution, ordered by
+  creation time then id. It is not filtered by actor. `WorkRunner.list_executions()`
+  returns that sequence. Pass an `ExecutionListQuery` to restrict by actor,
+  tenant, status and an exclusive keyset, with a limit. SQLite and PostgreSQL
+  apply that query in SQL. The creation time in the keyset is the JSON text
+  stored on the execution, so the three backends agree. No schema change is
+  required. The MCP server passes the verified actor in that query. Do not hand
+  the unfiltered list to a remote client.
 - **Journal entries** are inserted in call order. An update matches the expected
   status, the same way the in-memory repository does.
 - **Events** are gapless per execution. Registry-level events (no execution id) use

@@ -43,7 +43,8 @@ from id42_work.storage.codec import (
     load_input,
     load_record,
 )
-from id42_work.storage.protocols import IdempotencyRecord, IdempotencyScope
+from id42_work.storage.listing import execution_select
+from id42_work.storage.protocols import ExecutionListQuery, IdempotencyRecord, IdempotencyScope
 
 _SCHEMA_VERSION = 2
 _NO_TENANT = ""
@@ -367,10 +368,14 @@ class SqliteExecutionRepository:
             return None
         return load_execution(str(row[0]))
 
-    async def list(self) -> tuple[Execution, ...]:
+    async def list(self, query: ExecutionListQuery | None = None) -> tuple[Execution, ...]:
+        statement, params = execution_select(query, dialect="sqlite")
         with self._db.reading() as conn:
-            rows = conn.execute("SELECT body FROM executions").fetchall()
-        return executions_by_age(tuple(load_execution(str(row[0])) for row in rows))
+            rows = conn.execute(statement, params).fetchall()
+        loaded = tuple(load_execution(str(row[0])) for row in rows)
+        if query is None:
+            return executions_by_age(loaded)
+        return loaded
 
     async def compare_and_set(self, updated: Execution) -> None:
         with self._db.transaction() as conn:

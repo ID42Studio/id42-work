@@ -123,6 +123,13 @@ async def test_the_client_cannot_approve_or_choose_an_actor() -> None:
     assert "actor" not in tools["start_execution"]["properties"]
     assert "grants" not in tools["start_execution"]["properties"]
     assert set(tools["resume_execution"]["properties"]) == {"execution_id"}
+    assert set(tools["list_works"]["properties"]) == {"limit", "cursor"}
+    assert set(tools["list_executions"]["properties"]) == {"status", "limit", "cursor"}
+    for schema in tools.values():
+        properties = schema["properties"]
+        assert "actor_id" not in properties
+        assert "grants" not in properties
+        assert "credential" not in properties
     with pytest.raises(ToolError, match="Unknown tool"):
         await server.server.call_tool("approve", {"approval_id": "x"})
 
