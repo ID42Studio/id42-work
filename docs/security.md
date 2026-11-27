@@ -83,9 +83,12 @@ The optional MCP server (`docs/mcp.md`) is another untrusted caller. It does not
 widen what `WorkRunner` allows.
 
 - The client cannot pass an actor, a grant, a constraint or an approval decision.
-  There is no approve or reject tool. A waiting execution stays waiting until the
-  host decides through `ApprovalConsole` or `id42-work approvals`. That command
-  seals a different actor, with only the approval's reviewer grant.
+  There is no approve, reject or reconcile tool. A waiting execution stays waiting
+  until the host decides through `ApprovalConsole` or `id42-work approvals`. That
+  command seals a different actor, with only the approval's reviewer grant. An
+  uncertain capability call stays uncertain until `id42-work reconcile` or
+  `ReconciliationConsole` records a decision. `resume_execution` does not mark it
+  applied.
 - The host actor is issued inside the server process and checked against that
   process's `ActorAuthority` on every call. The first accepted identity is pinned.
 - The server shows and changes only executions with that actor id and tenant. A
@@ -119,11 +122,16 @@ a request and before the SDK recorded it. The SDK therefore:
   key);
 - marks interrupted or ambiguous side effects `UNCERTAIN`, with
   `requires_reconciliation=True`;
-- never retries a side effect automatically, whether the effect is financial or not.
-  A read that was cancelled because a sibling task hit an approval gate is run
-  again on resume; a side-effecting call in that situation stays `UNCERTAIN`.
+- never retries a side effect automatically, whether the effect is financial or not,
+  until reconciliation records that it was not applied. A read that was cancelled
+  because a sibling task hit an approval gate is run again on resume; a
+  side-effecting call in that situation stays `UNCERTAIN`.
 
 Treat at-least-once delivery and uncertain outcomes as normal cases in integrations.
+An operator settles one with `reconcile:<work_id>`, through `ReconciliationConsole`
+or `id42-work reconcile`. The operator is not the execution's actor. The decision,
+the actor and the reason are evidence. The MCP server has no reconcile tool. A
+provider probe is optional and must not perform the effect.
 
 **Determinism.** Resumption replays the executor. Executors must be deterministic
 given their input and the results of `context.invoke`. A non-deterministic completed

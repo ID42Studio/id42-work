@@ -66,6 +66,8 @@ process stops between the reservation and the record, a later call waits, then r
 - `invalid_action_id`, `duplicate_action_id`, `invalid_action_params`
 - `non_deterministic`
 - `uncertain_outcome`
+- `reconciliation_resolved` (a failed execution was reopened after reconciliation)
+- `reconciliation_abandoned`
 - `policy_denied_on_resume`
 - `invalid_capability_result`
 - `cancelled_in_flight`
@@ -73,6 +75,6 @@ process stops between the reservation and the record, a later call waits, then r
 Recovery of a crash during `VALIDATING` cannot move the execution to `FAILED`.
 Those reasons can then appear on `VALIDATION_FAILED`. When the journal shows an
 uncertain side effect, `execution.error.requires_reconciliation` is set. See
-[Storage](../storage.md).
+[Storage](../storage.md) and [Reconciliation](reconciliation.md).
 
 A violation is still recorded when the executor catches the exception.

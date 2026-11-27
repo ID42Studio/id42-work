@@ -45,6 +45,7 @@ Evidence records hold references and digests, not large payloads. The runner rec
 | `TOOL_RESULT` | For every completed capability call (result digest, operation id) |
 | `VALIDATION_REPORT` | After validation |
 | `APPROVAL_DECISION` | For every approval decision (actor, whether a reason was given, and the reason) |
+| `RECONCILIATION_DECISION` | For every reconciliation of an uncertain call (actor, reason, decision, operation id). The result is stored only as a digest |
 | Anything else | Through `context.add_evidence(...)` from the executor |
 
 Policies can require evidence types before completion

@@ -31,6 +31,8 @@ class JournalStatus(Enum):
     SUCCEEDED = "SUCCEEDED"
     FAILED = "FAILED"
     UNCERTAIN = "UNCERTAIN"
+    NOT_APPLIED = "NOT_APPLIED"
+    ABANDONED = "ABANDONED"
 
 
 class JournalEntry(FrozenModel):
@@ -68,6 +70,8 @@ class JournalEntry(FrozenModel):
             problems.append("result_digest is set exactly for SUCCEEDED actions")
         if self.status is JournalStatus.FAILED and self.error is None:
             problems.append("FAILED actions record the error")
+        if self.status is JournalStatus.ABANDONED and self.error is None:
+            problems.append("ABANDONED actions record the error")
         if problems:
             raise ValueError("; ".join(problems))
         return self

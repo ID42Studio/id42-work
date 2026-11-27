@@ -53,10 +53,11 @@ _MAX_PORT = 65535
 
 _INSTRUCTIONS = (
     "This server starts and inspects governed executions of works the host registered. "
-    "It cannot approve, reject or grant capabilities, and it cannot call a capability "
-    "except by running a registered work. The actor is chosen by the host. "
+    "It cannot approve, reject, reconcile or grant capabilities, and it cannot call a "
+    "capability except by running a registered work. The actor is chosen by the host. "
     "If status is WAITING_APPROVAL or WAITING_REVIEW, a person must decide outside "
-    "this server; resume_execution does not decide. "
+    "this server; resume_execution does not decide. An UNCERTAIN capability call is "
+    "reconciled outside this server; resume_execution does not mark it applied. "
     "Send exact amounts as JSON strings when the work schema uses them."
 )
 

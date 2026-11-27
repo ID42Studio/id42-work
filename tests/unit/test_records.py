@@ -52,6 +52,12 @@ def test_valid_journal_entries() -> None:
         finished_at=T0,
         error=ExecutionErrorInfo(type="KeyError", message="x"),
     )
+    _entry(JournalStatus.NOT_APPLIED, started_at=T0)
+    _entry(
+        JournalStatus.ABANDONED,
+        started_at=T0,
+        error=ExecutionErrorInfo(type="ReconciliationAbandoned", message="closed"),
+    )
 
 
 @pytest.mark.parametrize(
@@ -62,6 +68,7 @@ def test_valid_journal_entries() -> None:
         (JournalStatus.SUCCEEDED, {"started_at": T0, "finished_at": T0}),
         (JournalStatus.SUCCEEDED, {"started_at": T0, "result_digest": DIGEST_A}),
         (JournalStatus.FAILED, {"started_at": T0, "finished_at": T0}),
+        (JournalStatus.ABANDONED, {"started_at": T0}),
         (JournalStatus.IN_FLIGHT, {"started_at": T0, "operation_id": uuid4()}),
         (JournalStatus.IN_FLIGHT, {"started_at": T0, "action_id": "__start__"}),
     ],

@@ -25,10 +25,13 @@ Done:
   runs the validators again. A stored `context.record` or `RecordedModel` response
   is replayed and is not computed again. The execution does not enter `VALIDATING`
   a second time.
+- Reconciliation of uncertain capability calls. A provider may probe by operation
+  id. An operator decides with `id42-work reconcile` (`applied`, `not-applied`,
+  `abandon`), under `reconcile:<work_id>`. The MCP server has no reconcile tool.
+  See [Reconciliation](concepts/reconciliation.md).
 
 Still open:
 
-- Reconciliation tooling for uncertain side effects.
 - Registry-level events (`work.definition.registered` / `replaced`).
 
 ## v0.3: framework integrations

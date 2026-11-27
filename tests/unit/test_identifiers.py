@@ -9,6 +9,7 @@ from id42_work.identifiers import (
     SemVer,
     approve_grant,
     is_capability,
+    reconcile_grant,
     resume_grant,
 )
 
@@ -43,7 +44,13 @@ def test_invalid_capabilities(name: str) -> None:
 
 def test_grants_accept_capabilities_and_prefixed_targets() -> None:
     adapter = TypeAdapter(Grant)
-    for grant in ("odoo.invoice.post", approve_grant("payments.execute"), resume_grant("w")):
+    for grant in (
+        "odoo.invoice.post",
+        approve_grant("payments.execute"),
+        resume_grant("w"),
+        reconcile_grant("note"),
+        reconcile_grant("a" * 128),
+    ):
         assert adapter.validate_python(grant) == grant
     for bad in ("admin:all", "approve:", "approve:Bad"):
         with pytest.raises(ValidationError):

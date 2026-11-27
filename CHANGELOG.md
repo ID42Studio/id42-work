@@ -9,6 +9,16 @@ the public API; breaking changes are listed explicitly.
 
 ### Added
 
+- `id42-work reconcile list|show|applied|not-applied|abandon --factory module:callable`
+  settles an `UNCERTAIN` capability call. A provider may define
+  `async reconcile(self, call) -> ReconciliationProbe`; `resume` runs it when the
+  hook exists. `APPLIED` is replayed, `NOT_APPLIED` retries the same operation id,
+  and `UNKNOWN` leaves the call for an operator. The operator is sealed with only
+  `reconcile:<work_id>`, must not be the execution's actor, and every decision is
+  `RECONCILIATION_DECISION` evidence with the actor and the reason. Abandon leaves
+  the execution failed. `FAILED` and `VALIDATION_FAILED` may return to `READY`
+  only through this path. The MCP server still has no reconcile tool. See
+  `docs/concepts/reconciliation.md`.
 - `id42-work approvals list|show|approve|reject --factory module:callable` decides
   a waiting approval as an operator. The factory is the same contract as
   `mcp serve`. The operator is sealed by that factory's authority, in the

@@ -1,7 +1,7 @@
 """Command line entry point.
 
-``mcp serve`` and ``approvals`` load the MCP extra themselves. Importing this
-module does not import it.
+``mcp serve``, ``approvals`` and ``reconcile`` load the MCP extra themselves.
+Importing this module does not import it.
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ from collections.abc import Sequence
 from id42_work.approvals.commands import format_decision
 from id42_work.approvals.console import ApprovalResumeError
 from id42_work.exceptions import WorkError
+from id42_work.reconciliation.console import ReconciliationResumeError
 
 
 def main(argv: Sequence[str] | None = None) -> None:
@@ -102,7 +103,68 @@ def build_parser() -> argparse.ArgumentParser:
     )
     reject.add_argument("--reason", required=True, help="Why the approval was rejected")
     reject.set_defaults(handler=_approvals)
+    _add_reconcile(commands)
     return parser
+
+
+def _add_reconcile(
+    commands: argparse._SubParsersAction[argparse.ArgumentParser],  # pyright: ignore[reportPrivateUsage]
+) -> None:
+    reconcile = commands.add_parser(
+        "reconcile",
+        help="Reconcile uncertain capability calls as an operator. Not an MCP tool.",
+        description="Reconcile uncertain capability calls as an operator. Not an MCP tool.",
+    )
+    sub = reconcile.add_subparsers(dest="reconcile_command", required=True)
+    factory = argparse.ArgumentParser(add_help=False)
+    factory.add_argument(
+        "--factory",
+        required=True,
+        help="module:callable that returns a WorkMcpServer, the same contract as mcp serve",
+    )
+    listing = sub.add_parser(
+        "list", parents=[factory], help="List capability calls that are still UNCERTAIN"
+    )
+    listing.set_defaults(handler=_reconcile)
+    target = argparse.ArgumentParser(add_help=False)
+    target.add_argument("execution_id", help="Execution UUID")
+    target.add_argument("action_id", help="Journal action id")
+    show = sub.add_parser(
+        "show", parents=[factory, target], help="Show one journaled capability call"
+    )
+    show.set_defaults(handler=_reconcile)
+    actor = argparse.ArgumentParser(add_help=False)
+    actor.add_argument(
+        "--actor",
+        required=True,
+        help="Operator actor id. Sealed with only reconcile:<work_id>",
+    )
+    actor.add_argument("--reason", required=True, help="Why this decision was made")
+    resume = argparse.ArgumentParser(add_help=False)
+    resume.add_argument(
+        "--resume",
+        action="store_true",
+        help="After the decision, resume as the factory's host actor, not as the operator",
+    )
+    applied = sub.add_parser(
+        "applied",
+        parents=[factory, target, actor, resume],
+        help="The effect happened. Record the outcome and allow replay",
+    )
+    applied.add_argument("--result", required=True, help="JSON outcome confirmed for the call")
+    applied.set_defaults(handler=_reconcile)
+    not_applied = sub.add_parser(
+        "not-applied",
+        parents=[factory, target, actor, resume],
+        help="The effect did not happen. The same operation id may be retried",
+    )
+    not_applied.set_defaults(handler=_reconcile)
+    abandon = sub.add_parser(
+        "abandon",
+        parents=[factory, target, actor],
+        help="Close the uncertainty. The execution stays failed",
+    )
+    abandon.set_defaults(handler=_reconcile)
 
 
 _DEFAULT_HTTP_PORT = 8766
@@ -155,6 +217,39 @@ def _approvals(args: argparse.Namespace) -> int:
         asyncio.run(run_approval(server, args))
     except ApprovalResumeError as exc:
         print(format_decision("approved", exc.decision))
+        print(f"id42-work: {exc}", file=sys.stderr)
+        return 1
+    except WorkError as exc:
+        print(f"id42-work: {exc}", file=sys.stderr)
+        return 1
+    except ValueError as exc:
+        print(f"id42-work: {exc}", file=sys.stderr)
+        return 2
+    return 0
+
+
+def _reconcile(args: argparse.Namespace) -> int:
+    try:
+        from id42_work.mcp._dependency import require_mcp  # noqa: PLC0415
+
+        require_mcp()
+        from id42_work.mcp.server import load_factory  # noqa: PLC0415
+    except ImportError as exc:
+        print(exc, file=sys.stderr)
+        return 1
+    try:
+        server = load_factory(args.factory)
+    except (ImportError, AttributeError, ValueError, TypeError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    from id42_work.reconciliation.commands import format_decision as format_reconcile  # noqa: PLC0415
+    from id42_work.reconciliation.commands import run_reconcile  # noqa: PLC0415
+
+    try:
+        asyncio.run(run_reconcile(server, args))
+    except ReconciliationResumeError as exc:
+        kind = "applied" if exc.decision.entry.status.value == "SUCCEEDED" else "not-applied"
+        print(format_reconcile(kind, exc.decision))
         print(f"id42-work: {exc}", file=sys.stderr)
         return 1
     except WorkError as exc:

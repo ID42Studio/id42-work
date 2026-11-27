@@ -17,11 +17,11 @@ IDENTIFIER_PATTERN = rf"^{_SEGMENT}(?:\.{_SEGMENT})*$"
 CAPABILITY_PATTERN = IDENTIFIER_PATTERN
 """Capability names, e.g. ``odoo.invoice.post``."""
 
-GRANT_PREFIXES: tuple[str, ...] = ("approve", "resume", "cancel")
+GRANT_PREFIXES: tuple[str, ...] = ("approve", "resume", "cancel", "reconcile")
 """Prefixes for grants that are not capabilities themselves."""
 
 GRANT_PATTERN = rf"^(?:(?:{'|'.join(GRANT_PREFIXES)}):)?{_SEGMENT}(?:\.{_SEGMENT})*$"
-"""Actor grants: a capability, or ``approve:``, ``resume:`` or ``cancel:`` plus a target."""
+"""Actor grants: a capability, or one of ``approve:``, ``resume:``, ``cancel:``, ``reconcile:``."""
 
 ACTION_ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
 """Executor action ids. Cannot start with ``_``, which is reserved for gate actions."""
@@ -37,7 +37,8 @@ SHA256_HEX_PATTERN = r"^[0-9a-f]{64}$"
 
 Identifier = Annotated[str, StringConstraints(pattern=IDENTIFIER_PATTERN, max_length=128)]
 Capability = Annotated[str, StringConstraints(pattern=CAPABILITY_PATTERN, max_length=128)]
-Grant = Annotated[str, StringConstraints(pattern=GRANT_PATTERN, max_length=136)]
+# ``reconcile:`` (10) plus a 128-character work id is the longest accepted grant.
+Grant = Annotated[str, StringConstraints(pattern=GRANT_PATTERN, max_length=138)]
 ActionId = Annotated[str, StringConstraints(pattern=ACTION_ID_PATTERN)]
 SemVer = Annotated[str, StringConstraints(pattern=SEMVER_PATTERN, max_length=64)]
 Sha256Hex = Annotated[str, StringConstraints(pattern=SHA256_HEX_PATTERN)]
@@ -64,6 +65,11 @@ def resume_grant(work_id: str) -> str:
 def cancel_grant(work_id: str) -> str:
     """Grant that allows cancelling executions of ``work_id`` started by another actor."""
     return f"cancel:{work_id}"
+
+
+def reconcile_grant(work_id: str) -> str:
+    """Grant that allows reconciling uncertain calls of ``work_id``."""
+    return f"reconcile:{work_id}"
 
 
 RESERVED_CAPABILITY_PREFIX = "id42."

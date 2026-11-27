@@ -7,6 +7,8 @@ Every `context.invoke` is journaled as an entry with a status:
 - `SUCCEEDED` (with the JSON result and its digest)
 - `FAILED`
 - `UNCERTAIN`
+- `NOT_APPLIED` (the effect did not happen; the same operation id may be retried)
+- `ABANDONED` (the uncertainty was closed; the error is required)
 
 Each action gets a stable
 `operation_id = uuid5(NAMESPACE_ID42_WORK, f"{execution_id}:{action_id}")`. It is
@@ -35,7 +37,9 @@ With `SqliteStorage` or `PostgresStorage`, `resume` also recovers an execution l
 resume claim is left alone. Otherwise:
 
 - `SUCCEEDED` actions are replayed and the provider is not called;
-- a capability call still `IN_FLIGHT` becomes `UNCERTAIN`, the execution ends
+- a capability call still `IN_FLIGHT` is probed when the provider defines
+  `reconcile`. `APPLIED` is replayed. `NOT_APPLIED` is retried with the same
+  operation id. Otherwise the call becomes `UNCERTAIN`, the execution ends
   `FAILED` with `requires_reconciliation`, and the provider is not called again;
 - a `context.record` still `IN_FLIGHT` is computed again. Its result was never
   returned, and capability calls it already completed are replayed. If a capability
@@ -54,8 +58,8 @@ including when recovery fails closed, are in [Storage](../storage.md).
 A provider that cannot tell whether an external side effect happened must raise
 `UncertainOutcomeError`. A timeout or cancellation during a side-effecting call is
 treated the same way. The action becomes `UNCERTAIN` and the execution `FAILED` with
-`requires_reconciliation=True`. The SDK never retries: reconcile with the external
-system using the operation id.
+`requires_reconciliation=True`. The SDK does not retry until reconciliation says
+the effect did not happen. See [Reconciliation](reconciliation.md).
 
 ## Recorded computations
 

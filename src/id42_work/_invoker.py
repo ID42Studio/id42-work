@@ -314,6 +314,18 @@ class ActionInvoker:
             if _retry_cancelled_read(entry, self._rec.capabilities.is_side_effecting(capability)):
                 return _NOT_REPLAYED
             raise ExecutionFailedError(msg, execution_id=eid)
+        if entry.status is JournalStatus.NOT_APPLIED:
+            if not same:
+                msg = f"replayed action {entry.action_id!r} differs from the journal"
+                raise state.fail(
+                    NonDeterministicExecutionError(msg, execution_id=eid), "non_deterministic"
+                )
+            return _NOT_REPLAYED
+        if entry.status is JournalStatus.ABANDONED:
+            msg = f"action {entry.action_id!r} was abandoned during reconciliation"
+            raise state.fail(
+                ExecutionFailedError(msg, execution_id=eid), "reconciliation_abandoned"
+            )
         if entry.status is JournalStatus.IN_FLIGHT:
             await self._rec.mark_action_uncertain(self._execution, entry)
         if entry.status in {JournalStatus.IN_FLIGHT, JournalStatus.UNCERTAIN}:

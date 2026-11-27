@@ -245,7 +245,20 @@ async def test_another_actors_execution_stays_hidden() -> None:
     assert visible["executions"] == []
 
 
-_DECISION_TOOLS = ("approve", "reject", "decide", "grant_approval", "approve_execution")
+_DECISION_TOOLS = (
+    "approve",
+    "reject",
+    "decide",
+    "grant_approval",
+    "approve_execution",
+    "reconcile",
+    "applied",
+    "not_applied",
+    "not-applied",
+    "abandon",
+    "mark_applied",
+    "mark_not_applied",
+)
 
 
 @pytest.mark.asyncio
@@ -270,4 +283,5 @@ async def test_the_mcp_surface_has_no_decision_tool() -> None:
             await server.server.call_tool(name, {"approval_id": "x", "reason": "no"})
     instructions = getattr(server.server, "instructions", "")
     assert isinstance(instructions, str)
-    assert "cannot approve" in instructions
+    assert "cannot approve, reject, reconcile" in instructions
+    assert "reconcile" not in names

@@ -271,7 +271,8 @@ Details, module map and every deviation from the specification are in
 - Capability enforcement covers calls made through the SDK. It cannot stop arbitrary
   Python code in the same process from calling external systems directly.
 - The SDK cannot guarantee exactly-once external side effects. Uncertain results are
-  flagged for reconciliation and never retried.
+  flagged for reconciliation. A provider probe or `id42-work reconcile` is what
+  allows a retry, and only after the effect is recorded as not applied.
 - No OpenTelemetry integration yet (planned); subscribe to structured events instead.
 - Not reviewed by an external security auditor.
 
@@ -280,11 +281,11 @@ Details, module map and every deviation from the specification are in
 No dates are committed. SQLite, PostgreSQL, cross-process resume claims, recovery
 from a crash during `VALIDATING`, the PydanticAI agent integration, and an MCP
 server (`id42-work[mcp]`) are in the tree. The MCP server starts governed
-executions; it does not expose capabilities as tools and it cannot approve.
-`id42-work approvals` decides as a separate operator, using the same factory.
-Still open: reconciliation
-tooling, a LangGraph adapter, an Odoo 18 connector package, and workflow
-composition. See [docs/roadmap.md](docs/roadmap.md) and [docs/mcp.md](docs/mcp.md).
+executions; it does not expose capabilities as tools and it cannot approve or
+reconcile. `id42-work approvals` and `id42-work reconcile` decide as a separate
+operator, using the same factory. Still open: a LangGraph adapter, an Odoo 18
+connector package, and workflow composition. See [docs/roadmap.md](docs/roadmap.md)
+and [docs/mcp.md](docs/mcp.md).
 
 ## Contributing
 

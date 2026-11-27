@@ -66,6 +66,7 @@ from id42_work.outcomes.validators import validate_output_schema
 from id42_work.policy.engine import PolicyEngine
 from id42_work.policy.models import ApprovalGate, PolicyDecision
 from id42_work.policy.registry import CapabilityRegistry
+from id42_work.reconciliation.service import ReconciliationService
 from id42_work.registry import WorkBinding, WorkRegistry
 from id42_work.states import ExecutionStatus
 from id42_work.storage.protocols import IdempotencyRecord, IdempotencyScope, Storage
@@ -76,7 +77,13 @@ _JSON = TypeAdapter(JsonValue)
 
 S = ExecutionStatus
 _UNSAFE_ON_VALIDATE = frozenset(
-    {JournalStatus.PENDING_APPROVAL, JournalStatus.IN_FLIGHT, JournalStatus.UNCERTAIN}
+    {
+        JournalStatus.PENDING_APPROVAL,
+        JournalStatus.IN_FLIGHT,
+        JournalStatus.UNCERTAIN,
+        JournalStatus.NOT_APPLIED,
+        JournalStatus.ABANDONED,
+    }
 )
 _UNCERTAIN_JOURNAL = frozenset({JournalStatus.IN_FLIGHT, JournalStatus.UNCERTAIN})
 
@@ -136,6 +143,7 @@ class WorkRunner:
         self._resume_claim_ttl = resume_claim_ttl
         self._lease_owner = f"{os.getpid()}:{uuid4()}"
         self._approvals = ApprovalManager(recorder=self._rec, actor_authority=actor_authority)
+        self._reconciliation = ReconciliationService(recorder=self._rec, authority=actor_authority)
         self._driving: set[UUID] = set()
         self._driving_lock = threading.Lock()
 
@@ -145,6 +153,11 @@ class WorkRunner:
     def approvals(self) -> ApprovalManager:
         """List, approve, reject and expire approvals."""
         return self._approvals
+
+    @property
+    def reconciliation(self) -> ReconciliationService:
+        """Probe and decide uncertain capability calls. Not an MCP tool."""
+        return self._reconciliation
 
     @property
     def dispatcher(self) -> EventDispatcher:
@@ -345,12 +358,20 @@ class WorkRunner:
         is evaluated again with the current policy and the resuming actor's grants.
 
         A ``RUNNING`` execution means the previous process stopped while driving it.
-        A capability call left ``IN_FLIGHT`` becomes ``UNCERTAIN`` and the execution
-        ends ``FAILED`` with ``requires_reconciliation``; it is not retried. A
-        ``context.record`` left ``IN_FLIGHT`` is computed again: its result was never
-        returned, and capability calls it already completed are replayed. A second call
-        does not drive the execution when this process, or another process, already
-        holds the claim.
+        A capability call left ``IN_FLIGHT`` is probed when its provider defines
+        ``reconcile``. ``APPLIED`` is journaled as ``SUCCEEDED`` and replayed.
+        ``NOT_APPLIED`` is retried with the same operation id. Otherwise the call
+        becomes ``UNCERTAIN`` and the execution ends ``FAILED`` with
+        ``requires_reconciliation``; the provider's ``invoke`` is not called.
+        A ``context.record`` left ``IN_FLIGHT`` is computed again: its result was
+        never returned, and capability calls it already completed are replayed. A
+        second call does not drive the execution when this process, or another
+        process, already holds the claim.
+
+        A ``FAILED`` or ``VALIDATION_FAILED`` execution that still requires
+        reconciliation is probed again. When no capability call is left ``IN_FLIGHT``
+        or ``UNCERTAIN``, and none was abandoned, the execution moves to ``READY``
+        and continues. An abandoned call stays failed.
 
         A ``VALIDATING`` execution means the previous process stopped after the executor
         returned, while validators were running. The output was not stored. Resume
@@ -381,6 +402,11 @@ class WorkRunner:
         _check_operator(trusted, execution, resume_grant(execution.work_id), "resume")
         await self._approvals.expire_for_execution(execution_id)
         execution = await self._load(execution_id)
+        if (
+            execution.status in {S.FAILED, S.VALIDATION_FAILED}
+            and execution.requires_reconciliation
+        ):
+            execution = await self._reopen_if_reconciled(execution, trusted)
         if execution.status is S.RUNNING:
             return await self._resume_interrupted(execution, trusted, constraints)
         if execution.status is S.VALIDATING:
@@ -570,13 +596,18 @@ class WorkRunner:
                 if entry.status is JournalStatus.IN_FLIGHT and entry.capability != RECORD_CAPABILITY
             ]
             if in_flight:
+                in_flight = await self._reconciliation.probe(
+                    execution, in_flight, actor_id=actor.actor_id
+                )
+            if in_flight:
                 await self._rec.emit(
                     execution,
                     EventType.EXECUTION_RESUMED,
                     {"resumed_by": actor.actor_id, "interrupted": True},
                 )
                 for entry in in_flight:
-                    await self._rec.mark_action_uncertain(execution, entry)
+                    if entry.status is JournalStatus.IN_FLIGHT:
+                        await self._rec.mark_action_uncertain(execution, entry)
                 names = ", ".join(repr(entry.action_id) for entry in in_flight)
                 msg = f"actions {names} have an uncertain outcome; reconciliation required"
                 return await self._rec.fail(
@@ -622,6 +653,44 @@ class WorkRunner:
                 }
             )
             return await self._drive(current, binding, validated, decision, already_running=True)
+
+    async def _reopen_if_reconciled(self, execution: Execution, actor: TrustedActor) -> Execution:
+        """Probe a failed uncertain execution and continue it when every call is settled.
+
+        The execution is returned unchanged when a call is still uncertain, a call
+        was abandoned, or another driver holds the claim. A definition that was
+        replaced is refused only once continuation is otherwise possible.
+        """
+        async with self._exclusive(execution.execution_id) as claimed:
+            if not claimed:
+                return execution
+            current = await self._load(execution.execution_id)
+            if current.status not in {S.FAILED, S.VALIDATION_FAILED}:
+                return current
+            if not current.requires_reconciliation:
+                return current
+            journal = await self._rec.storage.executions.list_journal(current.execution_id)
+            unresolved = [
+                entry
+                for entry in journal
+                if entry.status in {JournalStatus.IN_FLIGHT, JournalStatus.UNCERTAIN}
+                and entry.capability != RECORD_CAPABILITY
+            ]
+            if unresolved:
+                await self._reconciliation.probe(current, unresolved, actor_id=actor.actor_id)
+                journal = await self._rec.storage.executions.list_journal(current.execution_id)
+            if self._reconciliation.blocked(journal):
+                return current
+            await self._open_for_resume(current)
+            return await self._rec.transition(
+                current,
+                S.READY,
+                EventType.EXECUTION_REOPENED,
+                {"resumed_by": actor.actor_id},
+                reason="reconciliation_resolved",
+                error=None,
+                outcome=None,
+            )
 
     async def _resume_validating(
         self,
