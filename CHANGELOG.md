@@ -9,6 +9,18 @@ the public API; breaking changes are listed explicitly.
 
 ### Added
 
+- MCP server: optional `session_actor` so distinct HTTP sessions are distinct
+  actors. `credential_session_actor` reads `Id42-Actor-Credential`
+  (`TrustedActor.to_credential`); the server still verifies the seal. HTTP
+  without that header is refused. Stdio has no header and stays the factory
+  actor. Omitting `session_actor` keeps the previous single pinned actor, and
+  a credential header is ignored in that mode. `host_actor()` stays the factory
+  actor used by `id42-work approvals --resume`. `list_works` and
+  `list_executions` take `limit` (default 50, maximum 100) and an opaque cursor
+  and return `next_cursor`. `ExecutionRepository.list` and
+  `WorkRunner.list_executions` accept an `ExecutionListQuery`. SQLite and
+  PostgreSQL apply it in SQL, with no schema migration. There is still no
+  approve, reject or reconcile tool. See `docs/mcp.md`.
 - `ActorAuthority` can persist its HMAC keys in a file (`key_path`, mode `0600`,
   atomic replace). `create_key_file=True` creates the file when it is missing.
   The constructor does not read the environment;

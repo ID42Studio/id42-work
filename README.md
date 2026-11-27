@@ -283,8 +283,10 @@ Details, module map and every deviation from the specification are in
 No dates are committed. SQLite, PostgreSQL, cross-process resume claims, recovery
 from a crash during `VALIDATING`, the PydanticAI agent integration, and an MCP
 server (`id42-work[mcp]`) are in the tree. The MCP server starts governed
-executions; it does not expose capabilities as tools and it cannot approve or
-reconcile. `id42-work approvals` and `id42-work reconcile` decide as a separate
+executions. Listing tools are paged. Each HTTP session can be its own verified
+actor; stdio stays the single factory actor, which is still the default. It
+does not expose capabilities as tools and it cannot approve or reconcile.
+`id42-work approvals` and `id42-work reconcile` decide as a separate
 operator, using the same factory. Still open: a LangGraph adapter, an Odoo 18
 connector package, and workflow composition. See [docs/roadmap.md](docs/roadmap.md)
 and [docs/mcp.md](docs/mcp.md).

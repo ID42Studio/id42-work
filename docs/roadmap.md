@@ -43,8 +43,10 @@ Still open:
 - Done: PydanticAI (`id42_work.integrations.pydantic_ai`) and the framework-neutral
   layer `id42_work.agents`, with model calls journaled by `context.record`.
 - Done: an MCP server (`id42-work[mcp]`, `id42_work.mcp`) that starts and inspects
-  governed executions. It does not expose capabilities as tools. Policies,
-  validators and approvals stay inside `WorkRunner`. See [MCP server](mcp.md).
+  governed executions. Listing tools are paged. An optional session actor gives
+  each HTTP session its own verified actor; stdio stays the factory actor. It
+  does not expose capabilities as tools. Policies, validators and approvals stay
+  inside `WorkRunner`. See [MCP server](mcp.md).
 - Done: `id42-work approvals` decides as an operator in a separate command. The
   MCP server still has no approve or reject tool. See [Approval](concepts/approval.md).
 - Next: LangGraph / LangChain (tools plus a journaled chat model).

@@ -1,12 +1,16 @@
 """MCP server over ``WorkRunner``.
 
 The client can start, inspect, resume, list and cancel executions of works the host
-registered. It cannot supply an actor, a grant or an approval decision, and it cannot
-call a capability except by running a registered executor. Policies, validators and
-approval gates stay inside the runner.
+registered. It cannot supply an actor id, a grant or an approval decision, and it
+cannot call a capability except by running a registered executor. Policies, validators
+and approval gates stay inside the runner.
 
-Reads and writes are limited to executions whose actor and tenant match the actor the
-host issues. A ``resume:`` or ``cancel:`` grant on that actor does not widen the set.
+By default one ``issue_actor`` identity is pinned for the process. A host may pass
+``session_actor`` so an HTTP session presents a credential from
+``TrustedActor.to_credential``; the server verifies it. Stdio stays the factory actor.
+Reads and writes are limited to executions whose actor and tenant match that actor.
+A ``resume:`` or ``cancel:`` grant does not widen the set. Listing tools return one
+page.
 """
 
 from __future__ import annotations
@@ -18,6 +22,7 @@ import logging
 import re
 import threading
 from collections.abc import Awaitable, Callable, Mapping
+from datetime import datetime
 from typing import TypeVar, cast
 from uuid import UUID
 
@@ -29,6 +34,15 @@ from id42_work import __version__
 from id42_work.actors import ActorAuthority, TrustedActor
 from id42_work.exceptions import UntrustedActorError, WorkError
 from id42_work.execution import Execution
+from id42_work.mcp.errors import McpCallError
+from id42_work.mcp.pages import (
+    EXECUTION_CURSOR_FIELDS,
+    WORK_CURSOR_FIELDS,
+    bounded_limit,
+    decode_cursor,
+    encode_cursor,
+)
+from id42_work.mcp.session import McpCaller, bind_request_actor, current_caller
 from id42_work.mcp.views import (
     approvals_view,
     events_view,
@@ -40,6 +54,8 @@ from id42_work.mcp.views import (
 )
 from id42_work.runner import WorkRunner
 from id42_work.states import ExecutionStatus
+from id42_work.storage.codec import execution_list_key
+from id42_work.storage.protocols import ExecutionListQuery
 
 _LOG = logging.getLogger("id42_work.mcp")
 _T = TypeVar("_T")
@@ -58,7 +74,8 @@ _INSTRUCTIONS = (
     "If status is WAITING_APPROVAL or WAITING_REVIEW, a person must decide outside "
     "this server; resume_execution does not decide. An UNCERTAIN capability call is "
     "reconciled outside this server; resume_execution does not mark it applied. "
-    "Send exact amounts as JSON strings when the work schema uses them."
+    "Send exact amounts as JSON strings when the work schema uses them. "
+    "list_works and list_executions return one page; pass cursor to continue."
 )
 
 _FACTORY_RE = re.compile(r"([A-Za-z_][\w.]*):([A-Za-z_]\w*)\Z")
@@ -67,14 +84,6 @@ JOURNAL_URI = "id42://executions/{execution_id}/journal"
 EVENTS_URI = "id42://executions/{execution_id}/events"
 EVIDENCE_URI = "id42://executions/{execution_id}/evidence"
 APPROVALS_URI = "id42://executions/{execution_id}/approvals"
-
-
-class McpCallError(Exception):
-    """A call the client can see. ``found`` is false when the execution is hidden."""
-
-    def __init__(self, message: str, *, found: bool = True) -> None:
-        super().__init__(message)
-        self.found = found
 
 
 def execution_uri(kind: str, execution_id: UUID) -> str:
@@ -113,6 +122,7 @@ class WorkMcpServer:
         *,
         authority: object,
         issue_actor: object,
+        session_actor: object | None = None,
         name: str = "id42-work",
         instructions: str | None = None,
     ) -> None:
@@ -125,16 +135,23 @@ class WorkMcpServer:
         if not callable(issue_actor):
             msg = "issue_actor must be a callable that returns a TrustedActor"
             raise TypeError(msg)
+        if session_actor is not None and not callable(session_actor):
+            msg = "session_actor must be a callable that returns a TrustedActor"
+            raise TypeError(msg)
         self._runner = runner
         self._authority = authority
         self._issue_actor = cast("Callable[[], TrustedActor]", issue_actor)
-        self._identity: tuple[str, str | None] | None = None
+        self._session_actor = cast("Callable[[McpCaller], TrustedActor] | None", session_actor)
+        self._host_identity: tuple[str, str | None] | None = None
+        self._unscoped_identity: tuple[str, str | None] | None = None
+        self._session_identities: dict[str, tuple[str, str | None]] = {}
         self._identity_lock = threading.Lock()
         self._server = MCPServer(
             name,
             instructions=instructions if instructions is not None else _INSTRUCTIONS,
             version=__version__,
         )
+        self._server.middleware.append(bind_request_actor)
         self._install(self._server)
 
     @property
@@ -153,12 +170,18 @@ class WorkMcpServer:
         return self._authority
 
     def host_actor(self) -> TrustedActor:
-        """Host execution actor. It can run and resume work. It cannot approve it."""
-        return self._actor()
+        """Factory actor from ``issue_actor``. Approvals resume as this actor.
 
-    async def list_works(self) -> dict[str, JsonValue]:
-        """Registered works. Requires a valid host actor and returns no executor code."""
-        return await guard(self._list_works())
+        It does not follow a session credential. It can run and resume work. It
+        cannot approve it.
+        """
+        return self._host_actor()
+
+    async def list_works(
+        self, *, limit: int | None = None, cursor: str | None = None
+    ) -> dict[str, JsonValue]:
+        """One page of registered works. Requires a valid actor and returns no code."""
+        return await guard(self._list_works(limit, cursor))
 
     async def start_execution(
         self,
@@ -178,9 +201,15 @@ class WorkMcpServer:
         """Continue an execution the host actor owns. This does not grant an approval."""
         return await guard(self._resume(execution_id))
 
-    async def list_executions(self, status: str | None = None) -> dict[str, JsonValue]:
-        """Summaries of executions owned by the host actor."""
-        return await guard(self._list_executions(status))
+    async def list_executions(
+        self,
+        status: str | None = None,
+        *,
+        limit: int | None = None,
+        cursor: str | None = None,
+    ) -> dict[str, JsonValue]:
+        """One page of summaries for executions owned by the request actor."""
+        return await guard(self._list_executions(status, limit, cursor))
 
     async def cancel_execution(
         self, execution_id: str, reason: str = "cancelled"
@@ -204,10 +233,21 @@ class WorkMcpServer:
         """JSON approval states. The resource does not accept a decision."""
         return await guard(self._read_approvals(execution_id))
 
-    async def _list_works(self) -> dict[str, JsonValue]:
-        self._actor()
-        works = [work_view(work) for work in self._runner.registered_works()]
-        return cast("dict[str, JsonValue]", {"works": works})
+    async def _list_works(self, limit: int | None, cursor: str | None) -> dict[str, JsonValue]:
+        self._request_actor()
+        page_limit = bounded_limit(limit)
+        works = self._runner.registered_works()
+        if cursor is not None:
+            fields = decode_cursor(cursor, WORK_CURSOR_FIELDS)
+            marker = (fields["id"], fields["version"])
+            works = tuple(work for work in works if (work.id, work.version) > marker)
+        chosen = works[:page_limit]
+        next_cursor = None
+        if len(works) > page_limit:
+            last = chosen[-1]
+            next_cursor = encode_cursor({"id": last.id, "version": last.version})
+        payload = {"works": [work_view(work) for work in chosen], "next_cursor": next_cursor}
+        return cast("dict[str, JsonValue]", payload)
 
     async def _start(
         self,
@@ -219,7 +259,7 @@ class WorkMcpServer:
         if not isinstance(input_data, dict):
             msg = "input_data must be a JSON object"
             raise McpCallError(msg)
-        actor = self._actor()
+        actor = self._request_actor()
         execution = await self._runner.run(
             work_id=work_id,
             version=version,
@@ -234,23 +274,43 @@ class WorkMcpServer:
 
     async def _resume(self, execution_id: str) -> dict[str, JsonValue]:
         current = await self._owned(execution_id)
-        execution = await self._runner.resume(current.execution_id, actor=self._actor())
+        execution = await self._runner.resume(current.execution_id, actor=self._request_actor())
         return await self._view(execution)
 
-    async def _list_executions(self, status: str | None) -> dict[str, JsonValue]:
-        actor = self._actor()
+    async def _list_executions(
+        self, status: str | None, limit: int | None, cursor: str | None
+    ) -> dict[str, JsonValue]:
+        actor = self._request_actor()
         wanted = _parse_status(status)
-        summaries = [
-            execution_summary(execution)
-            for execution in await self._runner.list_executions()
-            if _owns(actor, execution) and (wanted is None or execution.status is wanted)
-        ]
-        return cast("dict[str, JsonValue]", {"executions": summaries})
+        page_limit = bounded_limit(limit)
+        after_created, after_id = _execution_cursor(cursor)
+        rows = await self._runner.list_executions(
+            ExecutionListQuery(
+                restrict_actor=True,
+                actor_id=actor.actor_id,
+                tenant_id=actor.tenant_id,
+                status=None if wanted is None else wanted.value,
+                after_created_at=after_created,
+                after_execution_id=after_id,
+                limit=page_limit + 1,
+            )
+        )
+        chosen = rows[:page_limit]
+        next_cursor = None
+        if len(rows) > page_limit:
+            last = chosen[-1]
+            created, execution_id = execution_list_key(last)
+            next_cursor = encode_cursor({"created_at": created, "execution_id": execution_id})
+        payload = {
+            "executions": [execution_summary(execution) for execution in chosen],
+            "next_cursor": next_cursor,
+        }
+        return cast("dict[str, JsonValue]", payload)
 
     async def _cancel(self, execution_id: str, reason: str) -> dict[str, JsonValue]:
         current = await self._owned(execution_id)
         execution = await self._runner.cancel(
-            current.execution_id, actor=self._actor(), reason=reason
+            current.execution_id, actor=self._request_actor(), reason=reason
         )
         return await self._view(execution)
 
@@ -279,7 +339,7 @@ class WorkMcpServer:
         return execution_view(execution, approvals)
 
     async def _owned(self, execution_id: str) -> Execution:
-        actor = self._actor()
+        actor = self._request_actor()
         try:
             parsed = UUID(execution_id)
         except (ValueError, TypeError, AttributeError) as exc:
@@ -289,32 +349,82 @@ class WorkMcpServer:
             raise McpCallError("execution not found", found=False)
         return execution
 
-    def _actor(self) -> TrustedActor:
+    def _host_actor(self) -> TrustedActor:
+        trusted = self._verified(self._call_issuer(self._issue_actor), credential=False)
+        self._pin_host(trusted)
+        return trusted
+
+    def _request_actor(self) -> TrustedActor:
+        session_actor = self._session_actor
+        if session_actor is None:
+            return self._host_actor()
+        caller = current_caller()
+        issued = self._call_session(session_actor, caller)
+        trusted = self._verified(issued, credential=caller.credential is not None)
+        self._pin_session(caller, trusted)
+        return trusted
+
+    def _call_issuer(self, issue: Callable[[], TrustedActor]) -> TrustedActor:
         try:
-            issued = self._issue_actor()
+            return issue()
         except McpCallError:
             raise
         except Exception as exc:
             raise McpCallError("the host could not issue an actor") from exc
+
+    def _call_session(
+        self, session_actor: Callable[[McpCaller], TrustedActor], caller: McpCaller
+    ) -> TrustedActor:
         try:
-            trusted = self._authority.verify(issued)
+            return session_actor(caller)
+        except McpCallError:
+            raise
+        except Exception as exc:
+            raise McpCallError("the host could not resolve an actor") from exc
+
+    def _verified(self, issued: object, *, credential: bool) -> TrustedActor:
+        try:
+            return self._authority.verify(issued)
         except UntrustedActorError as exc:
+            if credential:
+                raise McpCallError("the actor credential was refused") from exc
             raise McpCallError("the host actor was refused") from exc
-        identity = (trusted.actor_id, trusted.tenant_id)
+
+    def _pin_host(self, actor: TrustedActor) -> None:
+        identity = (actor.actor_id, actor.tenant_id)
         with self._identity_lock:
-            if self._identity is None:
-                self._identity = identity
-            elif self._identity != identity:
+            if self._host_identity is None:
+                self._host_identity = identity
+            elif self._host_identity != identity:
                 raise McpCallError("the host actor identity changed")
-        return trusted
+
+    def _pin_session(self, caller: McpCaller, actor: TrustedActor) -> None:
+        identity = (actor.actor_id, actor.tenant_id)
+        if caller.transport == "http" and caller.session_id is None:
+            return
+        key = caller.session_id if caller.transport == "http" else None
+        with self._identity_lock:
+            if key is None:
+                if self._unscoped_identity is None:
+                    self._unscoped_identity = identity
+                elif self._unscoped_identity != identity:
+                    raise McpCallError("the host actor identity changed")
+                return
+            current = self._session_identities.get(key)
+            if current is None:
+                self._session_identities[key] = identity
+            elif current != identity:
+                raise McpCallError("the session actor changed")
 
     def _install(self, protocol: MCPServer) -> None:
         host = self
 
         @protocol.tool()
-        async def list_works() -> dict[str, JsonValue]:
-            """List works the host registered, including input and output schemas."""
-            return await _as_tool(host.list_works())
+        async def list_works(
+            limit: int | None = None, cursor: str | None = None
+        ) -> dict[str, JsonValue]:
+            """List one page of works the host registered, including schemas."""
+            return await _as_tool(host.list_works(limit=limit, cursor=cursor))
 
         @protocol.tool()
         async def start_execution(
@@ -338,9 +448,13 @@ class WorkMcpServer:
             return await _as_tool(host.resume_execution(execution_id))
 
         @protocol.tool()
-        async def list_executions(status: str | None = None) -> dict[str, JsonValue]:
-            """List executions owned by the host actor. Optional status filter."""
-            return await _as_tool(host.list_executions(status))
+        async def list_executions(
+            status: str | None = None,
+            limit: int | None = None,
+            cursor: str | None = None,
+        ) -> dict[str, JsonValue]:
+            """List one page of executions owned by the caller. Optional status filter."""
+            return await _as_tool(host.list_executions(status, limit=limit, cursor=cursor))
 
         @protocol.tool()
         async def cancel_execution(
@@ -428,6 +542,22 @@ def load_factory(spec: str) -> WorkMcpServer:
 
 def _owns(actor: TrustedActor, execution: Execution) -> bool:
     return actor.actor_id == execution.actor_id and actor.tenant_id == execution.tenant_id
+
+
+def _execution_cursor(cursor: str | None) -> tuple[str | None, str | None]:
+    if cursor is None:
+        return None, None
+    fields = decode_cursor(cursor, EXECUTION_CURSOR_FIELDS)
+    created = fields["created_at"]
+    execution_id = fields["execution_id"]
+    try:
+        parsed = datetime.fromisoformat(created)
+        UUID(execution_id)
+    except ValueError:
+        raise McpCallError("cursor is invalid") from None
+    if parsed.tzinfo is None:
+        raise McpCallError("cursor is invalid")
+    return created, execution_id
 
 
 def _parse_status(status: str | None) -> ExecutionStatus | None:

@@ -83,28 +83,45 @@ The SDK defends against:
 The optional MCP server (`docs/mcp.md`) is another untrusted caller. It does not
 widen what `WorkRunner` allows.
 
-- The client cannot pass an actor, a grant, a constraint or an approval decision.
-  There is no approve, reject or reconcile tool. A waiting execution stays waiting
-  until the host decides through `ApprovalConsole` or `id42-work approvals`. That
-  command seals a different actor, with only the approval's reviewer grant. An
-  uncertain capability call stays uncertain until `id42-work reconcile` or
-  `ReconciliationConsole` records a decision. `resume_execution` does not mark it
-  applied.
-- The host actor is issued inside the server process and checked against that
-  process's `ActorAuthority` on every call. The first accepted identity is pinned.
-- The server shows and changes only executions with that actor id and tenant. A
-  `resume:` or `cancel:` grant does not reveal or cancel someone else's execution
-  through MCP. Calling `WorkRunner` directly still honours those grants.
-- `WorkRunner.list_executions` is not filtered. Only the MCP tool filters. Do not
-  return the runner's list to a remote client.
+- The client cannot pass an actor id, a grant, a constraint or an approval
+  decision as a tool argument. There is no approve, reject or reconcile tool. A
+  waiting execution stays waiting until the host decides through
+  `ApprovalConsole` or `id42-work approvals`. That command seals a different
+  actor, with only the approval's reviewer grant. An uncertain capability call
+  stays uncertain until `id42-work reconcile` or `ReconciliationConsole` records
+  a decision. `resume_execution` does not mark it applied.
+- The default server issues one actor inside the process and checks it against
+  that process's `ActorAuthority` on every call. The first accepted identity is
+  pinned. A credential header is ignored, so a neighbor on `127.0.0.1` cannot
+  select another actor.
+- A host may pass `session_actor`. `credential_session_actor` parses
+  `Id42-Actor-Credential` (`TrustedActor.to_credential`) and the server verifies
+  the seal, the authority, and the lifetime. On HTTP a missing credential is
+  refused. It is not replaced by the factory actor. Stdio has no header and
+  stays the single fallback actor. The session id is pinned to the first
+  verified identity. The credential is a bearer token. Keep the server on
+  loopback.
+- `host_actor()` remains the factory actor. Approval and reconcile resume use
+  that actor, not the session credential.
+- The server shows and changes only executions with the verified actor id and
+  tenant. The page is selected in storage, so another actor's row cannot occupy
+  a slot in the page. A `resume:` or `cancel:` grant does not reveal or cancel
+  someone else's execution through MCP. Calling `WorkRunner` directly still
+  honours those grants.
+- `WorkRunner.list_executions()` with no query is not filtered. Pass an
+  `ExecutionListQuery`, or filter the list, before returning it to a remote
+  client. The MCP tools pass that query.
 - Journal results shown over MCP pass through the default redactor. Approval
   parameter previews and action digests are left out. Events stay as the runner
   stored them: identifiers and digests, not raw inputs.
 
 HTTP listens on `127.0.0.1` only. That address is not configurable. A client on
 another machine needs stdio in the same process, or a tunnel the host operates.
-The server does not add authentication of its own: anyone who can speak to the
-process can act as the host actor the factory issues.
+The default server does not add authentication of its own: anyone who can speak
+to the process can act as the host actor the factory issues. With
+`credential_session_actor`, HTTP calls must present a sealed credential. That
+token is still a bearer secret on the loopback interface. Stdio remains one
+factory actor.
 
 ## Authority keys
 

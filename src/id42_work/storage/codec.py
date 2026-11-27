@@ -21,14 +21,19 @@ from id42_work.execution import Execution
 _ModelT = TypeVar("_ModelT", bound=BaseModel)
 
 
+def execution_list_key(execution: Execution) -> tuple[str, str]:
+    """Sort key shared by memory and the SQL page: JSON creation time, then id.
+
+    The time text is the same value ``dump_execution`` stores, so a cursor built
+    from a loaded record matches ``json`` extraction in SQLite and PostgreSQL.
+    """
+    created = execution.model_dump(mode="json")["created_at"]
+    return (str(created), str(execution.execution_id))
+
+
 def executions_by_age(executions: tuple[Execution, ...]) -> tuple[Execution, ...]:
     """Order executions by creation time, then by id."""
-    return tuple(
-        sorted(
-            executions,
-            key=lambda execution: (execution.created_at, str(execution.execution_id)),
-        )
-    )
+    return tuple(sorted(executions, key=execution_list_key))
 
 
 def model_ref(model: BaseModel) -> str:
