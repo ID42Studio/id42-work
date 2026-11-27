@@ -2,112 +2,11 @@
 
 from __future__ import annotations
 
+from importlib.resources import files
+
 from jinja2 import DictLoader, Environment, StrictUndefined
 
-_CSS = """
-:root {
-  color-scheme: light;
-  --bg: #f3f5f4;
-  --paper: #ffffff;
-  --ink: #1b2421;
-  --muted: #5c6b66;
-  --line: #d5deda;
-  --accent: #0e6b58;
-  --accent-ink: #ffffff;
-  --danger: #8d2f2f;
-  --danger-bg: #f8ecec;
-  --ok-bg: #e7f4ef;
-}
-* { box-sizing: border-box; }
-body {
-  margin: 0;
-  background: var(--bg);
-  color: var(--ink);
-  font: 16px/1.5 ui-sans-serif, system-ui, sans-serif;
-}
-header, main {
-  width: min(960px, calc(100% - 32px));
-  margin: 0 auto;
-}
-header {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 24px 0 8px;
-}
-h1, h2 { margin: 0 0 8px; }
-h1 { font-size: 1.35rem; }
-h2 { font-size: 1.05rem; }
-p { margin: 0 0 12px; }
-.muted { color: var(--muted); }
-main { padding-bottom: 48px; }
-table {
-  width: 100%;
-  border-collapse: collapse;
-  background: var(--paper);
-}
-th, td {
-  padding: 8px 10px;
-  text-align: left;
-  border-bottom: 1px solid var(--line);
-  vertical-align: top;
-}
-a { color: var(--accent); }
-form.card, .card {
-  display: grid;
-  gap: 12px;
-  max-width: 40rem;
-  margin: 16px 0;
-  padding: 16px;
-  background: var(--paper);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-}
-label { display: grid; gap: 4px; font-weight: 600; }
-input, textarea {
-  font: inherit;
-  padding: 8px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: #fff;
-}
-textarea { min-height: 6rem; }
-button, .button {
-  font: inherit;
-  width: fit-content;
-  padding: 8px 14px;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  background: var(--accent);
-  color: var(--accent-ink);
-  text-decoration: none;
-}
-button.danger { background: var(--danger); }
-button.quiet {
-  background: transparent;
-  color: var(--ink);
-  border-color: var(--line);
-}
-.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-.flash {
-  padding: 10px 12px;
-  border-radius: 6px;
-  background: var(--ok-bg);
-}
-.flash.error { background: var(--danger-bg); }
-pre.record {
-  overflow: auto;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  padding: 12px;
-  background: var(--paper);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-}
-header form { margin: 0; }
-:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-"""
+STYLESHEET = files("id42_work.web").joinpath("static/operator.css").read_text(encoding="utf-8")
 
 _LAYOUT = """<!DOCTYPE html>
 <html lang="en">
@@ -116,23 +15,36 @@ _LAYOUT = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
 <title>{{ title }} · ID42 Work</title>
-<style>{{ css }}</style>
+<link rel="stylesheet" href="/static/operator.css">
 </head>
 <body>
-<header>
-<div>
-<h1>ID42 Work</h1>
-<p class="muted">Operator decisions</p>
-</div>
+<a class="skip" href="#content">Skip to content</a>
 {% if actor_id %}
+<header class="top">
+<div class="shell top-inner">
+<a class="brand" href="/">
+<strong><span>ID42</span> Work</strong>
+<small>{{ factory if factory else "Local factory" }}</small>
+</a>
+<nav class="nav" aria-label="Decisions">
+<a href="/" {% if section == "approvals" %}aria-current="page"{% endif %}>
+Approvals <span class="count">{{ approval_count }}</span>
+</a>
+<a href="/reconcile" {% if section == "reconcile" %}aria-current="page"{% endif %}>
+Reconciliation <span class="count">{{ call_count }}</span>
+</a>
+</nav>
+<div class="who">
+<p>Signed in as <strong>{{ actor_id }}</strong></p>
 <form method="post" action="/logout">
 <input type="hidden" name="csrf" value="{{ csrf }}">
-<p class="muted">Signed in as {{ actor_id }}</p>
 <button class="quiet" type="submit">Sign out</button>
 </form>
-{% endif %}
+</div>
+</div>
 </header>
-<main>
+{% endif %}
+<main id="content" class="shell">
 {% if flash %}
 <p class="flash{% if flash_error %} error{% endif %}" role="status">{{ flash }}</p>
 {% endif %}
@@ -144,157 +56,266 @@ _LAYOUT = """<!DOCTYPE html>
 
 _LOGIN = """{% extends "layout.html" %}
 {% block body %}
-<h2>Sign in</h2>
-<p class="muted">Decisions use the same consoles as the command line.
+<div class="mark">
+<strong><span>ID42</span> Work</strong>
+<p>{{ factory if factory else "Local factory" }}</p>
+</div>
+<section class="panel signin">
+<h1>Sign in</h1>
+<p class="lede">Decisions use the same consoles as the command line.
 This page is not an MCP tool.</p>
-<form class="card" method="post" action="/login">
+<form method="post" action="/login">
 <input type="hidden" name="csrf" value="{{ csrf }}">
 {% if token_auth %}
-<label>Operator token
-<input type="password" name="token" autocomplete="off" required>
+<label class="field">Operator token
+<input type="password" name="token" autocomplete="current-password" required>
 </label>
-<label>Actor id
-<input type="text" name="actor_id" autocomplete="off" maxlength="256" required>
+<label class="field">Actor id
+<input type="text" name="actor_id" autocomplete="username" maxlength="256" required>
 </label>
 {% endif %}
 {% if credential_auth %}
-<label>Actor credential
-<input type="password" name="credential" autocomplete="off">
+<label class="field">Actor credential
+<input type="password" name="credential" autocomplete="off"
+{% if not token_auth %} required{% endif %}>
 </label>
-<p class="muted">The credential is checked with this process's authority.
+<p class="lede">The credential is checked with this process's authority.
 When a token is configured, the token is required as well.</p>
 {% endif %}
 <button type="submit">Sign in</button>
 </form>
+</section>
 {% endblock %}
 """
 
 _HOME = """{% extends "layout.html" %}
 {% block body %}
-<h2>Pending approvals</h2>
+{% if section == "approvals" %}
+<h1>Approvals</h1>
+<p class="lede">Requests waiting for this operator.</p>
 {% if approvals %}
+<div class="panel">
 <table>
 <thead><tr>
-<th>Work</th><th>Gate</th><th>Capability</th><th>Status</th>
+<th>Work</th><th>Gate</th><th>Capability</th><th>Requested</th><th>Status</th>
 </tr></thead>
 <tbody>
 {% for row in approvals %}
 <tr>
-<td><a href="/approvals/{{ row.approval_id }}">{{ row.work_id }}</a></td>
+<td><a class="work" href="{{ row.href }}">{{ row.work_id }}</a>
+<span class="meta">{{ row.work_version }}</span></td>
 <td>{{ row.gate }}</td>
 <td>{{ row.capability }}</td>
-<td>{{ row.execution_status }}</td>
+<td><time datetime="{{ row.iso }}">{{ row.absolute }}</time>
+<span class="meta">{{ row.relative }}</span></td>
+<td><span class="badge badge-{{ row.badge }}">{{ row.status }}</span></td>
 </tr>
 {% endfor %}
 </tbody>
 </table>
+</div>
 {% else %}
-<p>No approvals are waiting.</p>
+<section class="panel empty">
+<h2>No approvals are waiting.</h2>
+<p>New requests appear in this list.</p>
+</section>
 {% endif %}
-<h2>Uncertain calls</h2>
+{% else %}
+<h1>Reconciliation</h1>
+<p class="lede">Capability calls that are still uncertain.</p>
 {% if calls %}
+<div class="panel">
 <table>
 <thead><tr>
-<th>Work</th><th>Action</th><th>Capability</th><th>Status</th>
+<th>Work</th><th>Action</th><th>Capability</th><th>Started</th><th>Status</th>
 </tr></thead>
 <tbody>
 {% for row in calls %}
 <tr>
-<td><a href="{{ row.href }}">{{ row.work_id }}</a></td>
+<td><a class="work" href="{{ row.href }}">{{ row.work_id }}</a>
+<span class="meta">{{ row.work_version }}</span></td>
 <td>{{ row.action_id }}</td>
 <td>{{ row.capability }}</td>
-<td>{{ row.execution_status }}</td>
+<td><time datetime="{{ row.iso }}">{{ row.absolute }}</time>
+<span class="meta">{{ row.relative }}</span></td>
+<td><span class="badge badge-{{ row.badge }}">{{ row.status }}</span></td>
 </tr>
 {% endfor %}
 </tbody>
 </table>
+</div>
 {% else %}
-<p>No uncertain calls are waiting.</p>
+<section class="panel empty">
+<h2>No uncertain calls are waiting.</h2>
+<p>A call stays here until an operator records what happened.</p>
+</section>
+{% endif %}
 {% endif %}
 {% endblock %}
 """
 
-_APPROVAL = """{% extends "layout.html" %}
+_FIELDS = """
+<dl class="summary">
+{% for field in fields %}
+<div{% if field.kind == "copy" %} class="wide"{% endif %}>
+<dt>{{ field.label }}</dt>
+<dd>
+{% if field.kind == "badge" %}
+<span class="badge badge-{{ field.badge }}">{{ field.value }}</span>
+{% elif field.kind == "copy" %}
+<input class="copy" type="text" readonly value="{{ field.value }}" aria-label="{{ field.label }}">
+{% elif field.kind == "time" %}
+<time datetime="{{ field.iso }}">{{ field.value }}</time>
+<span class="meta">{{ field.relative }}</span>
+{% else %}
+{{ field.value }}
+{% endif %}
+</dd>
+</div>
+{% endfor %}
+</dl>
+"""
+
+_APPROVAL = (
+    """{% extends "layout.html" %}
 {% block body %}
-<p><a href="/">All decisions</a></p>
-<h2>Approval</h2>
-<pre class="record">{{ record_json }}</pre>
-{% if pending %}
-<form class="card" method="post" action="/approvals/{{ approval_id }}/approve">
+<p class="back"><a href="/">Approvals</a></p>
+<h1>Approval</h1>
+<section class="panel">
+"""
+    + _FIELDS
+    + """
+</section>
+<section class="panel block">
+<h2>Parameters</h2>
+<p class="hint">Redacted the same way as the command line.</p>
+{% if preview %}
+<pre class="code">{{ preview }}</pre>
+{% else %}
+<p class="hint">No parameters were recorded.</p>
+{% endif %}
+</section>
+{% if confirm_kind == "reject" %}
+<section class="panel confirm">
+<h2>Reject this approval?</h2>
+<p>The execution ends rejected.</p>
+<p class="quoted">{{ confirm_reason }}</p>
+<form method="post" action="/approvals/{{ approval_id }}/reject">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<input type="hidden" name="reason" value="{{ confirm_reason }}">
+<input type="hidden" name="confirm" value="yes">
+<div class="row-actions">
+<button class="danger" type="submit">Reject approval</button>
+<a class="quiet button" href="/approvals/{{ approval_id }}">Cancel</a>
+</div>
+</form>
+</section>
+{% elif pending %}
+<div class="actions">
+<form class="panel" method="post" action="/approvals/{{ approval_id }}/approve">
 <input type="hidden" name="csrf" value="{{ csrf }}">
 <h2>Approve</h2>
-<label>Reason
+<label class="field">Reason
 <input type="text" name="reason" maxlength="2000" autocomplete="off">
 </label>
-<label class="row"><input type="checkbox" name="resume" value="on">
+<label class="check"><input type="checkbox" name="resume" value="on">
 Resume as the host actor</label>
 <button type="submit">Approve</button>
 </form>
-<form class="card" method="post" action="/approvals/{{ approval_id }}/reject">
+<form class="panel" method="post" action="/approvals/{{ approval_id }}/reject">
 <input type="hidden" name="csrf" value="{{ csrf }}">
 <h2>Reject</h2>
-<label>Reason
+<label class="field">Reason
 <input type="text" name="reason" maxlength="2000" autocomplete="off" required>
 </label>
 <button class="danger" type="submit">Reject</button>
 </form>
+</div>
 {% else %}
-<p>This approval is no longer waiting.</p>
+<p class="lede">This approval is no longer waiting.</p>
 {% endif %}
 {% endblock %}
 """
+)
 
-_RECONCILE = """{% extends "layout.html" %}
+_RECONCILE = (
+    """{% extends "layout.html" %}
 {% block body %}
-<p><a href="/">All decisions</a></p>
-<h2>Uncertain call</h2>
-<pre class="record">{{ record_json }}</pre>
-{% if open_call %}
-<form class="card" method="post" action="{{ action }}/applied">
+<p class="back"><a href="/reconcile">Reconciliation</a></p>
+<h1>Uncertain call</h1>
+<section class="panel">
+"""
+    + _FIELDS
+    + """
+</section>
+{% if confirm_kind == "abandon" %}
+<section class="panel confirm">
+<h2>Abandon this call?</h2>
+<p>The execution stays failed. Nothing is retried.</p>
+<p class="quoted">{{ confirm_reason }}</p>
+<form method="post" action="{{ action }}/abandon">
+<input type="hidden" name="csrf" value="{{ csrf }}">
+<input type="hidden" name="reason" value="{{ confirm_reason }}">
+<input type="hidden" name="confirm" value="yes">
+<div class="row-actions">
+<button class="danger" type="submit">Abandon call</button>
+<a class="quiet button" href="{{ action }}">Cancel</a>
+</div>
+</form>
+</section>
+{% elif open_call %}
+<div class="stack">
+<form class="panel block" method="post" action="{{ action }}/applied">
 <input type="hidden" name="csrf" value="{{ csrf }}">
 <h2>Applied</h2>
-<label>Reason
+<p class="hint">The effect happened. The result is stored with the decision.</p>
+<label class="field">Reason
 <input type="text" name="reason" maxlength="2000" autocomplete="off" required>
 </label>
-<label>Result JSON
+<label class="field">Result JSON
 <textarea name="result" autocomplete="off" required></textarea>
 </label>
-<label class="row"><input type="checkbox" name="resume" value="on">
+<label class="check"><input type="checkbox" name="resume" value="on">
 Resume as the host actor</label>
 <button type="submit">Mark applied</button>
 </form>
-<form class="card" method="post" action="{{ action }}/not-applied">
+<form class="panel block" method="post" action="{{ action }}/not-applied">
 <input type="hidden" name="csrf" value="{{ csrf }}">
 <h2>Not applied</h2>
-<label>Reason
+<p class="hint">Nothing was written. Resume can retry the same operation.</p>
+<label class="field">Reason
 <input type="text" name="reason" maxlength="2000" autocomplete="off" required>
 </label>
-<label class="row"><input type="checkbox" name="resume" value="on">
+<label class="check"><input type="checkbox" name="resume" value="on">
 Resume as the host actor</label>
 <button type="submit">Mark not applied</button>
 </form>
-<form class="card" method="post" action="{{ action }}/abandon">
+<form class="panel block" method="post" action="{{ action }}/abandon">
 <input type="hidden" name="csrf" value="{{ csrf }}">
 <h2>Abandon</h2>
-<p class="muted">The execution stays failed.</p>
-<label>Reason
+<p class="hint">The execution stays failed.</p>
+<label class="field">Reason
 <input type="text" name="reason" maxlength="2000" autocomplete="off" required>
 </label>
 <button class="danger" type="submit">Abandon</button>
 </form>
+</div>
 {% else %}
-<p>This call is no longer uncertain.</p>
+<p class="lede">This call is no longer uncertain.</p>
 {% endif %}
 {% endblock %}
 """
+)
 
 _MESSAGE = """{% extends "layout.html" %}
 {% block body %}
-<h2>{{ heading }}</h2>
+<section class="panel block">
+<h1>{{ heading }}</h1>
 <p>{{ message }}</p>
 {% if show_login %}
 <p><a href="/login">Sign in</a></p>
 {% endif %}
+</section>
 {% endblock %}
 """
 
@@ -315,6 +336,13 @@ _ENV = Environment(
 
 
 def render(template: str, **context: object) -> str:
-    """Render one page. ``css`` is injected so templates stay free of the stylesheet."""
-    context.setdefault("css", _CSS)
+    """Render one page. Missing shell values stay empty so error pages still render."""
+    context.setdefault("factory", "")
+    context.setdefault("section", "")
+    context.setdefault("approval_count", 0)
+    context.setdefault("call_count", 0)
+    context.setdefault("actor_id", None)
+    context.setdefault("csrf", "")
+    context.setdefault("flash", None)
+    context.setdefault("flash_error", False)
     return _ENV.get_template(template).render(**context)

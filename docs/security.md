@@ -144,6 +144,8 @@ Safe defaults:
   process's `ActorAuthority.verify` accepts it. If a token is also configured,
   the token must still match. The credential does not widen the grant: the
   console seals a new actor with only the decision grant.
+- Reject and abandon show a confirmation step before the console is called.
+  Approve, applied and not-applied do not.
 - Every POST needs the session cookie and a CSRF token, and `Origin` or
   `Referer` must match the request host. Cookies are `HttpOnly` and
   `SameSite=Strict`. Responses set `X-Content-Type-Options`, `X-Frame-Options`,

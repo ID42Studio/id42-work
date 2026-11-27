@@ -339,6 +339,7 @@ def _web_serve(args: argparse.Namespace) -> int:
             port=args.port,
             token_file=args.token_file,
             credential_auth=args.credential_auth,
+            factory=args.factory,
         )
     except (TypeError, ValueError) as exc:
         print(f"id42-work: {exc}", file=sys.stderr)

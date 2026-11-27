@@ -47,6 +47,7 @@ def app_client(
     credential_auth: bool = False,
     clock: Callable[[], datetime] | None = None,
     session_ttl: timedelta | None = None,
+    factory: str = "",
 ) -> TestClient:
     """A client whose default origin is the test server."""
     chosen = secret(phrase) if token is _UNSET else token
@@ -56,6 +57,7 @@ def app_client(
             token=chosen,
             credential_auth=credential_auth,
             clock=clock,
+            factory=factory,
         )
     else:
         application = create_app(
@@ -64,6 +66,7 @@ def app_client(
             credential_auth=credential_auth,
             clock=clock,
             session_ttl=session_ttl,
+            factory=factory,
         )
     return TestClient(application, base_url=ORIGIN)
 

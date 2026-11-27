@@ -224,7 +224,7 @@ def test_the_execution_actor_cannot_approve_itself() -> None:
     token = signed_in(client, approval_host.ACTOR_ID)
     page = client.post(
         f"/approvals/{approval_id}/reject",
-        data={"csrf": token, "reason": "self"},
+        data={"csrf": token, "reason": "self", "confirm": "yes"},
         headers={"origin": ORIGIN},
         follow_redirects=True,
     )
@@ -262,7 +262,7 @@ def test_reconcile_seals_only_the_reconcile_grant(monkeypatch: pytest.MonkeyPatc
     assert issued[0]["actor_id"] == OPERATOR
     show = client.get(f"/reconcile/{execution_id}/{action_id}")
     assert "hidden-outcome" not in show.text
-    assert "result_digest" in show.text
+    assert "Result digest" in show.text
     assert '"result"' not in show.text
 
 
@@ -292,7 +292,7 @@ def test_pages_escape_operator_text() -> None:
     token = csrf(home.text)
     client.post(
         f"/approvals/{approval_id}/reject",
-        data={"csrf": token, "reason": "<img src=x onerror=alert(1)>"},
+        data={"csrf": token, "reason": "<img src=x onerror=alert(1)>", "confirm": "yes"},
         headers={"origin": ORIGIN},
     )
     detail = client.get(f"/approvals/{approval_id}")

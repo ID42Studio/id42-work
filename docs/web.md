@@ -62,15 +62,19 @@ nothing.
 
 ## What the pages do
 
-The home page lists pending approvals and uncertain capability calls. An
-approval page shows the same JSON as `id42-work approvals show`, including the
-redacted parameter preview. A call page shows the same JSON as
-`id42-work reconcile show`. The provider result appears only as `result_digest`.
+Approvals are listed at `/`. Uncertain calls are listed at `/reconcile`.
+Each row shows a status and the time it was requested. An approval page and a
+call page show the same fields as `id42-work approvals show` and
+`id42-work reconcile show`, as a labeled summary. The parameter preview is the
+redacted preview. The provider result appears only as its digest. The header
+names the factory passed to `web serve`.
 
-Approve and reject match the CLI. Reject needs a reason. Reconciliation needs
-a reason. Applied also needs a JSON result (`null` is allowed). Resume is off
+Approve and reject match the CLI. Reject and abandon ask for confirmation
+before the console is called. Reject, applied, not-applied and abandon need a
+reason. Applied also needs a JSON result (`null` is allowed). Resume is off
 unless the form asks for it, and resume runs as the factory's host actor, not
 as the operator. Abandon has no resume. A decision that the console refuses is
-shown on the page and is not stored twice.
+shown on the page and is not stored twice. The pages use one local stylesheet
+and do not require JavaScript.
 
 Do not put the operator token in a URL, a bookmark or a screenshot.

@@ -20,7 +20,6 @@ from starlette.routing import Route
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from id42_work.actors import ActorAuthority
-from id42_work.approvals.commands import format_show as format_approval
 from id42_work.approvals.console import (
     ApprovalDecision,
     ApprovalResumeError,
@@ -33,7 +32,6 @@ from id42_work.approvals.models import ApprovalStatus
 from id42_work.exceptions import WorkError
 from id42_work.identifiers import ACTION_ID_PATTERN
 from id42_work.journal import JournalStatus
-from id42_work.reconciliation.commands import format_show as format_call
 from id42_work.reconciliation.console import (
     ReconciliationDecision,
     ReconciliationResumeError,
@@ -57,7 +55,17 @@ from id42_work.web.auth import (
     origin_allowed,
 )
 from id42_work.web.config import OperatorSecret
-from id42_work.web.render import render
+from id42_work.web.present import (
+    absolute_time,
+    approval_fields,
+    badge,
+    call_fields,
+    factory_label,
+    format_preview,
+    iso_time,
+    relative_time,
+)
+from id42_work.web.render import STYLESHEET, render
 
 _LOG = logging.getLogger("id42_work.web")
 _DEFAULT_SESSION_TTL = timedelta(hours=8)
@@ -72,7 +80,7 @@ _FORBIDDEN = 403
 _NOT_FOUND = 404
 _TOO_LARGE = 413
 _SERVER_ERROR = 500
-_FIELDS = ("csrf", "token", "actor_id", "credential", "reason", "result", "resume")
+_FIELDS = ("csrf", "token", "actor_id", "credential", "reason", "result", "resume", "confirm")
 
 _SECURITY_HEADERS: tuple[tuple[str, str], ...] = (
     ("x-content-type-options", "nosniff"),
@@ -81,7 +89,7 @@ _SECURITY_HEADERS: tuple[tuple[str, str], ...] = (
     ("cache-control", "no-store"),
     (
         "content-security-policy",
-        "default-src 'none'; style-src 'unsafe-inline'; "
+        "default-src 'none'; style-src 'self'; "
         "form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
     ),
     ("cross-origin-opener-policy", "same-origin"),
@@ -141,6 +149,8 @@ class OperatorSite:
         token: OperatorSecret | None,
         credential_auth: bool,
         sessions: SessionStore,
+        factory: str,
+        clock: Callable[[], datetime],
     ) -> None:
         self._approvals = approval_console_from_server(server)
         self._reconcile = reconcile_console_from_server(server)
@@ -148,13 +158,17 @@ class OperatorSite:
         self._token = token
         self._credential_auth = credential_auth
         self._sessions = sessions
+        self._factory = factory
+        self._clock = clock
 
     def routes(self) -> list[Route]:
         """Routes for one Starlette app. Nothing here is an MCP tool."""
         return [
+            Route("/static/operator.css", self.stylesheet, methods=["GET"]),
             Route("/login", self.login, methods=["GET", "POST"]),
             Route("/logout", self.logout, methods=["POST"]),
             Route("/", self.home, methods=["GET"]),
+            Route("/reconcile", self.reconcile_index, methods=["GET"]),
             Route("/approvals/{approval_id}", self.approval, methods=["GET"]),
             Route("/approvals/{approval_id}/approve", self.approve, methods=["POST"]),
             Route("/approvals/{approval_id}/reject", self.reject, methods=["POST"]),
@@ -222,8 +236,20 @@ class OperatorSite:
         response.delete_cookie(SESSION_COOKIE, path="/")
         return response
 
+    def stylesheet(self, request: Request) -> Response:
+        """Serve the local stylesheet. It contains no operator data."""
+        del request
+        return Response(STYLESHEET, media_type="text/css")
+
     async def home(self, request: Request) -> Response:
-        """List pending approvals and uncertain calls."""
+        """List pending approvals."""
+        return await self._queue(request, section="approvals")
+
+    async def reconcile_index(self, request: Request) -> Response:
+        """List uncertain capability calls."""
+        return await self._queue(request, section="reconcile")
+
+    async def _queue(self, request: Request, *, section: str) -> Response:
         opened = self._open_get(request)
         if isinstance(opened, Response):
             return opened
@@ -233,23 +259,34 @@ class OperatorSite:
             approvals = await self._approvals.list_pending()
             calls = await self._reconcile.list_open()
         except WorkError as exc:
-            return _message(str(exc), status=_BAD_REQUEST, session=session, flash=flash)
+            return _message(
+                str(exc),
+                status=_BAD_REQUEST,
+                session=session,
+                flash=flash,
+                factory=self._factory,
+            )
         except Exception as exc:  # noqa: BLE001 - the page must not echo an unexpected trace
             return _unexpected(exc)
+        now = self._clock()
         body = render(
             "home.html",
-            title="Decisions",
+            title="Approvals" if section == "approvals" else "Reconciliation",
             actor_id=session.actor_id,
             csrf=session.csrf,
             flash=flash,
             flash_error=flash_error,
-            approvals=[_approval_row(row) for row in approvals],
-            calls=[_call_row(row) for row in calls],
+            factory=self._factory,
+            section=section,
+            approval_count=len(approvals),
+            call_count=len(calls),
+            approvals=[_approval_row(row, now) for row in approvals],
+            calls=[_call_row(row, now) for row in calls],
         )
         return HTMLResponse(body)
 
     async def approval(self, request: Request) -> Response:
-        """Show one approval, using the same JSON as ``id42-work approvals show``."""
+        """Show one approval, with the same fields as ``id42-work approvals show``."""
         opened = self._open_get(request)
         if isinstance(opened, Response):
             return opened
@@ -259,32 +296,19 @@ class OperatorSite:
             approval_id = _uuid(request.path_params["approval_id"], "approval id")
         except ValueError as exc:
             return _message(
-                str(exc), status=_BAD_REQUEST, session=session, flash=flash, flash_error=flash_error
+                str(exc),
+                status=_BAD_REQUEST,
+                session=session,
+                flash=flash,
+                flash_error=flash_error,
+                factory=self._factory,
             )
-        try:
-            snapshot = await self._approvals.show(approval_id)
-        except WorkError as exc:
-            return _message(
-                str(exc), status=_NOT_FOUND, session=session, flash=flash, flash_error=flash_error
-            )
-        except Exception as exc:  # noqa: BLE001 - the page must not echo an unexpected trace
-            return _unexpected(exc)
-        pending = snapshot.approval.status is ApprovalStatus.PENDING
-        body = render(
-            "approval.html",
-            title="Approval",
-            actor_id=session.actor_id,
-            csrf=session.csrf,
-            flash=flash,
-            flash_error=flash_error,
-            record_json=format_approval(snapshot),
-            approval_id=str(approval_id),
-            pending=pending,
+        return await self._approval_page(
+            session, approval_id, flash=flash, flash_error=flash_error, confirm_reason=""
         )
-        return HTMLResponse(body)
 
     async def reconcile(self, request: Request) -> Response:
-        """Show one call, using the same JSON as ``id42-work reconcile show``."""
+        """Show one call, with the same fields as ``id42-work reconcile show``."""
         opened = self._open_get(request)
         if isinstance(opened, Response):
             return opened
@@ -294,28 +318,21 @@ class OperatorSite:
             execution_id, action_id = _call_target(request)
         except ValueError as exc:
             return _message(
-                str(exc), status=_BAD_REQUEST, session=session, flash=flash, flash_error=flash_error
+                str(exc),
+                status=_BAD_REQUEST,
+                session=session,
+                flash=flash,
+                flash_error=flash_error,
+                factory=self._factory,
             )
-        try:
-            snapshot = await self._reconcile.show(execution_id, action_id)
-        except WorkError as exc:
-            return _message(
-                str(exc), status=_NOT_FOUND, session=session, flash=flash, flash_error=flash_error
-            )
-        except Exception as exc:  # noqa: BLE001 - the page must not echo an unexpected trace
-            return _unexpected(exc)
-        body = render(
-            "reconcile.html",
-            title="Uncertain call",
-            actor_id=session.actor_id,
-            csrf=session.csrf,
+        return await self._call_page(
+            session,
+            execution_id,
+            action_id,
             flash=flash,
             flash_error=flash_error,
-            record_json=format_call(snapshot),
-            action=_call_href(execution_id, action_id),
-            open_call=snapshot.entry.status is JournalStatus.UNCERTAIN,
+            confirm_reason="",
         )
-        return HTMLResponse(body)
 
     async def approve(self, request: Request) -> Response:
         """Grant the approval as the signed-in operator."""
@@ -337,6 +354,99 @@ class OperatorSite:
         """Close the uncertainty. The execution stays failed."""
         return await self._reconcile_post(request, "abandon")
 
+    async def _approval_page(
+        self,
+        session: Session,
+        approval_id: UUID,
+        *,
+        flash: str | None,
+        flash_error: bool,
+        confirm_reason: str,
+    ) -> Response:
+        try:
+            snapshot = await self._approvals.show(approval_id)
+            approvals, calls = await self._counts()
+        except WorkError as exc:
+            return _message(
+                str(exc),
+                status=_NOT_FOUND,
+                session=session,
+                flash=flash,
+                flash_error=flash_error,
+                factory=self._factory,
+            )
+        except Exception as exc:  # noqa: BLE001 - the page must not echo an unexpected trace
+            return _unexpected(exc)
+        now = self._clock()
+        body = render(
+            "approval.html",
+            title="Approval",
+            actor_id=session.actor_id,
+            csrf=session.csrf,
+            flash=flash,
+            flash_error=flash_error,
+            factory=self._factory,
+            section="approvals",
+            approval_count=approvals,
+            call_count=calls,
+            fields=approval_fields(snapshot, now),
+            preview=format_preview(snapshot.approval.params_preview),
+            approval_id=str(approval_id),
+            pending=snapshot.approval.status is ApprovalStatus.PENDING,
+            confirm_kind="reject" if confirm_reason else "",
+            confirm_reason=confirm_reason,
+        )
+        return HTMLResponse(body)
+
+    async def _call_page(
+        self,
+        session: Session,
+        execution_id: UUID,
+        action_id: str,
+        *,
+        flash: str | None,
+        flash_error: bool,
+        confirm_reason: str,
+    ) -> Response:
+        try:
+            snapshot = await self._reconcile.show(execution_id, action_id)
+            approvals, calls = await self._counts()
+        except WorkError as exc:
+            return _message(
+                str(exc),
+                status=_NOT_FOUND,
+                session=session,
+                flash=flash,
+                flash_error=flash_error,
+                factory=self._factory,
+            )
+        except Exception as exc:  # noqa: BLE001 - the page must not echo an unexpected trace
+            return _unexpected(exc)
+        now = self._clock()
+        body = render(
+            "reconcile.html",
+            title="Uncertain call",
+            actor_id=session.actor_id,
+            csrf=session.csrf,
+            flash=flash,
+            flash_error=flash_error,
+            factory=self._factory,
+            section="reconcile",
+            approval_count=approvals,
+            call_count=calls,
+            fields=call_fields(snapshot, now),
+            action=_call_href(execution_id, action_id),
+            open_call=snapshot.entry.status is JournalStatus.UNCERTAIN,
+            confirm_kind="abandon" if confirm_reason else "",
+            confirm_reason=confirm_reason,
+        )
+        return HTMLResponse(body)
+
+    async def _counts(self) -> tuple[int, int]:
+        approvals = await self._approvals.list_pending()
+        calls = await self._reconcile.list_open()
+        return len(approvals), len(calls)
+
     async def _approval_post(self, request: Request, *, granted: bool) -> Response:
         opened = await self._open_post(request)
         if isinstance(opened, Response):
@@ -345,7 +455,17 @@ class OperatorSite:
         try:
             approval_id = _uuid(request.path_params["approval_id"], "approval id")
         except ValueError as exc:
-            return _message(str(exc), status=_BAD_REQUEST, session=session)
+            return _message(str(exc), status=_BAD_REQUEST, session=session, factory=self._factory)
+        if not granted and fields["confirm"] != "yes":
+            reason = _optional_reason(fields["reason"])
+            if reason is not None:
+                return await self._approval_page(
+                    session,
+                    approval_id,
+                    flash=None,
+                    flash_error=False,
+                    confirm_reason=reason,
+                )
         target = f"/approvals/{approval_id}"
         try:
             decision = await self._decide_approval(granted, approval_id, session, fields)
@@ -386,7 +506,18 @@ class OperatorSite:
         try:
             execution_id, action_id = _call_target(request)
         except ValueError as exc:
-            return _message(str(exc), status=_BAD_REQUEST, session=session)
+            return _message(str(exc), status=_BAD_REQUEST, session=session, factory=self._factory)
+        if kind == "abandon" and fields["confirm"] != "yes":
+            reason = _optional_reason(fields["reason"])
+            if reason is not None:
+                return await self._call_page(
+                    session,
+                    execution_id,
+                    action_id,
+                    flash=None,
+                    flash_error=False,
+                    confirm_reason=reason,
+                )
         target = _call_href(execution_id, action_id)
         try:
             decision = await self._decide_call(kind, execution_id, action_id, session, fields)
@@ -411,7 +542,7 @@ class OperatorSite:
             self._note(session_id, str(exc), error=True)
             return _redirect(target)
         if isinstance(exc, ValueError):
-            return _message(str(exc), status=_BAD_REQUEST, session=session)
+            return _message(str(exc), status=_BAD_REQUEST, session=session, factory=self._factory)
         return _unexpected(exc)
 
     async def _decide_call(
@@ -494,6 +625,7 @@ class OperatorSite:
             flash_error=flash is not None,
             token_auth=self._token is not None,
             credential_auth=self._credential_auth,
+            factory=self._factory,
         )
         response = HTMLResponse(body, status_code=_UNAUTHORIZED if flash else 200)
         _set_cookie(response, CSRF_COOKIE, csrf, _CSRF_MAX_AGE)
@@ -517,6 +649,7 @@ def create_app(
     credential_auth: object = False,
     clock: Callable[[], datetime] | None = None,
     session_ttl: timedelta = _DEFAULT_SESSION_TTL,
+    factory: object = "",
 ) -> ASGIApp:
     """Build the operator UI. ``server`` is the same factory object ``mcp serve`` loads.
 
@@ -526,6 +659,9 @@ def create_app(
     """
     if not isinstance(credential_auth, bool):
         msg = "credential auth must be a flag"
+        raise TypeError(msg)
+    if not isinstance(factory, str):
+        msg = "factory label must be a string"
         raise TypeError(msg)
     if token is not None and not isinstance(token, OperatorSecret):
         msg = "token must be an OperatorSecret"
@@ -540,6 +676,8 @@ def create_app(
         token=token,
         credential_auth=credential_auth,
         sessions=SessionStore(ttl=session_ttl, clock=_utc_now if clock is None else clock),
+        factory=factory_label(factory),
+        clock=_utc_now if clock is None else clock,
     )
     return SecurityHeaders(Starlette(debug=False, routes=site.routes()))
 
@@ -550,24 +688,35 @@ def _approval_notice(granted: bool, decision: ApprovalDecision) -> str:
     return f"Approval {verb}. Execution is {decision.execution.status.value}. {resumed}"
 
 
-def _approval_row(row: ApprovalSnapshot) -> dict[str, str]:
+def _approval_row(row: ApprovalSnapshot, now: datetime) -> dict[str, str]:
     capability = row.approval.capability if row.approval.capability is not None else "-"
     return {
-        "approval_id": str(row.approval.approval_id),
+        "href": f"/approvals/{row.approval.approval_id}",
         "work_id": row.execution.work_id,
+        "work_version": row.execution.work_version,
         "gate": row.approval.gate.value,
         "capability": capability,
-        "execution_status": row.execution.status.value,
+        "status": row.approval.status.value,
+        "badge": badge(row.approval.status.value),
+        "absolute": absolute_time(row.approval.requested_at),
+        "relative": relative_time(row.approval.requested_at, now),
+        "iso": iso_time(row.approval.requested_at),
     }
 
 
-def _call_row(row: ReconciliationSnapshot) -> dict[str, str]:
+def _call_row(row: ReconciliationSnapshot, now: datetime) -> dict[str, str]:
+    moment = row.entry.started_at if row.entry.started_at is not None else row.execution.created_at
     return {
         "href": _call_href(row.execution.execution_id, row.entry.action_id),
         "work_id": row.execution.work_id,
+        "work_version": row.execution.work_version,
         "action_id": row.entry.action_id,
         "capability": row.entry.capability,
-        "execution_status": row.execution.status.value,
+        "status": row.entry.status.value,
+        "badge": badge(row.entry.status.value),
+        "absolute": absolute_time(moment),
+        "relative": relative_time(moment, now),
+        "iso": iso_time(moment),
     }
 
 
@@ -682,6 +831,7 @@ def _message(
     session: Session | None,
     flash: str | None = None,
     flash_error: bool = False,
+    factory: str = "",
 ) -> Response:
     body = render(
         "message.html",
@@ -693,6 +843,8 @@ def _message(
         csrf="" if session is None else session.csrf,
         flash=flash,
         flash_error=flash_error,
+        factory=factory,
+        section="approvals",
     )
     return HTMLResponse(body, status_code=status)
 

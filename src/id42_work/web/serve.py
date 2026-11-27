@@ -24,6 +24,7 @@ def serve_web(
     port: object = DEFAULT_PORT,
     token_file: object = None,
     credential_auth: object = False,
+    factory: object = "",
     environ: Mapping[str, str] | None = None,
 ) -> None:
     """Serve ``server`` until the process is interrupted.
@@ -39,10 +40,13 @@ def serve_web(
     if token_file is not None and not isinstance(token_file, str):
         msg = "token file must be a path"
         raise TypeError(msg)
+    if not isinstance(factory, str):
+        msg = "factory label must be a string"
+        raise TypeError(msg)
     bind = require_loopback(host)
     number = require_port(port)
     secret = load_operator_secret(token_file, os.environ if environ is None else environ)
-    app = create_app(server, token=secret, credential_auth=credential_auth)
+    app = create_app(server, token=secret, credential_auth=credential_auth, factory=factory)
     import uvicorn  # noqa: PLC0415
 
     uvicorn.run(

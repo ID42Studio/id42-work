@@ -187,6 +187,8 @@ def test_bad_server_options_are_type_errors() -> None:
         serve_web(server, credential_auth="yes")  # type: ignore[arg-type]
     with pytest.raises(TypeError, match="path"):
         serve_web(server, token_file=1)  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match="factory"):
+        serve_web(server, factory=1)  # type: ignore[arg-type]
 
 
 def test_package_import_does_not_pull_the_web_stack() -> None:

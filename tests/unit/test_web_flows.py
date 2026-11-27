@@ -57,7 +57,7 @@ def test_approve_with_resume_and_reject_and_logout() -> None:
     token = csrf(home.text)
     rejected = client.post(
         f"/approvals/{second}/reject",
-        data={"csrf": token, "reason": "no"},
+        data={"csrf": token, "reason": "no", "confirm": "yes"},
         headers={"origin": ORIGIN},
         follow_redirects=True,
     )
@@ -134,7 +134,7 @@ def test_reconcile_not_applied_abandon_and_bad_result() -> None:
     token = csrf(home.text)
     abandoned = client.post(
         f"/reconcile/{execution_id}/{action_id}/abandon",
-        data={"csrf": token, "reason": "cannot be known", "resume": "on"},
+        data={"csrf": token, "reason": "cannot be known", "resume": "on", "confirm": "yes"},
         headers={"origin": ORIGIN},
         follow_redirects=True,
     )
@@ -506,6 +506,8 @@ def test_create_app_rejects_a_bad_configuration() -> None:
         create_app(server, token=secret(), session_ttl=timedelta(milliseconds=1))
     with pytest.raises(TypeError, match="WorkMcpServer"):
         create_app(object(), token=secret())
+    with pytest.raises(TypeError, match="factory"):
+        create_app(server, token=secret(), factory=1)  # type: ignore[arg-type]
 
 
 def test_sessions_tokens_and_origins() -> None:

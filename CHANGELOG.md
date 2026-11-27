@@ -18,7 +18,9 @@ the public API; breaking changes are listed explicitly.
   without an operator token (`--token-file`, `ID42_WORK_WEB_TOKEN_FILE` or
   `ID42_WORK_WEB_TOKEN`) or `--credential-auth`. A configured token is always
   required, including when a `TrustedActor` credential is also accepted.
-  Every POST needs the session and a CSRF token. The MCP server still has no
+  Every POST needs the session and a CSRF token. Reject and abandon ask for
+  confirmation before the console is called. Pages are a local stylesheet with
+  labeled summaries, not a script bundle. The MCP server still has no
   decision tool. See `docs/web.md`.
 - MCP server: optional `session_actor` so distinct HTTP sessions are distinct
   actors. `credential_session_actor` reads `Id42-Actor-Credential`
