@@ -34,8 +34,9 @@ Resources, all `application/json`:
 - `id42://executions/{execution_id}/evidence`
 - `id42://executions/{execution_id}/approvals`
 
-There is no approve or reject tool. Extra arguments such as `actor_id` or `grants`
-are ignored. Amounts that the work schema types as `Decimal` must be JSON strings.
+There is no approve or reject tool. `id42-work approvals` is a separate command,
+not a tool on this server. Extra arguments such as `actor_id` or `grants` are
+ignored. Amounts that the work schema types as `Decimal` must be JSON strings.
 A float would change the action digest.
 
 ## What stays gated
@@ -55,8 +56,10 @@ providers, and it issues the actor.
   grants can resume or cancel another actor's execution when you call it directly.
 - Policies, validators and approval gates run inside the runner. `start_execution`
   returns `WAITING_APPROVAL` or `WAITING_REVIEW` and does not wait for the person.
-  `resume_execution` does not decide. The host approves or rejects through
-  `ApprovalManager`, outside the MCP server, then the client may resume.
+  `resume_execution` does not decide. The host approves or rejects with
+  `id42-work approvals` or `ApprovalConsole`, outside the MCP server, then the
+  client may resume. The operator is a different actor from the one this server
+  issues.
 - Journal results pass through the default redactor. Approval parameter previews
   and action digests are omitted. Events and evidence are the records the runner
   already stored.
@@ -142,6 +145,19 @@ a single-host CIDR.
 `toolTimeout` defaults to 30 seconds. A tool call returns when the runner
 returns, including at `WAITING_APPROVAL`, so a human decision is not inside that
 timeout. A long executor is. Raise `toolTimeout` for those works.
+
+Decide in another process, with the same factory. `--resume` continues as the
+host actor that factory issues, not as `--actor`:
+
+```bash
+id42-work approvals list --factory myapp.governed:server
+id42-work approvals approve APPROVAL_ID \
+  --factory myapp.governed:server --actor id42-operator --reason "checked" --resume
+```
+
+See [Approval](concepts/approval.md). The command is not registered with the MCP
+client. A host that today shells out to its own helper can drop that helper once
+this command is what it runs.
 
 Omit `enabledTools`, or set it to `["*"]`, so tools and the journal resources are
 both registered. Any other list registers only those tools and skips resources.

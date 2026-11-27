@@ -70,7 +70,8 @@ class ApprovalManager:
 
         Raises ``UntrustedActorError``, ``ApprovalNotAllowedError`` (missing reviewer
         grant, self-approval, other tenant), ``ApprovalExpiredError`` or
-        ``ApprovalError`` (unknown, already decided, missing reason).
+        ``ApprovalError`` (unknown, already decided, missing reason). The reviewer and
+        the reason are stored on the approval and on ``APPROVAL_DECISION`` evidence.
         """
         return await self._decide(approval_id, reviewer, reason, grant=True)
 
@@ -176,6 +177,7 @@ class ApprovalManager:
                 "decision": decided.status.value,
                 "decision_actor_id": trusted.actor_id,
                 "reason_provided": bool(reason),
+                "reason": reason,
             },
         )
         await rec.emit(

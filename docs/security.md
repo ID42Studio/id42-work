@@ -41,6 +41,8 @@ The SDK defends against:
   the gate, the action and its canonical parameters. A changed parameter invalidates
   the approval. Reviewers must hold the gate's grant, belong to the same tenant and
   differ from the execution's actor. Decisions are compare-and-set: exactly one wins.
+  `id42-work approvals` seals the operator with only that grant. It does not give
+  the operator the execution's capabilities, and it does not resume as that operator.
 - **Violations stick.** Using an ungranted capability, a malformed or duplicate
   action id, non-canonical parameters, exceeding `max_actions` or a non-deterministic
   replay fails the execution, even if the executor catches the exception. An executor
@@ -82,7 +84,8 @@ widen what `WorkRunner` allows.
 
 - The client cannot pass an actor, a grant, a constraint or an approval decision.
   There is no approve or reject tool. A waiting execution stays waiting until the
-  host decides through `ApprovalManager`.
+  host decides through `ApprovalConsole` or `id42-work approvals`. That command
+  seals a different actor, with only the approval's reviewer grant.
 - The host actor is issued inside the server process and checked against that
   process's `ActorAuthority` on every call. The first accepted identity is pinned.
 - The server shows and changes only executions with that actor id and tenant. A

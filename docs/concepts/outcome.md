@@ -44,7 +44,7 @@ Evidence records hold references and digests, not large payloads. The runner rec
 | `INPUT_REFERENCE` | At creation (input fingerprint) |
 | `TOOL_RESULT` | For every completed capability call (result digest, operation id) |
 | `VALIDATION_REPORT` | After validation |
-| `APPROVAL_DECISION` | For every approval decision |
+| `APPROVAL_DECISION` | For every approval decision (actor, whether a reason was given, and the reason) |
 | Anything else | Through `context.add_evidence(...)` from the executor |
 
 Policies can require evidence types before completion

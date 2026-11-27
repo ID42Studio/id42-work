@@ -141,6 +141,20 @@ class WorkMcpServer:
         """The official MCP server. Transports call ``run`` on it."""
         return self._server
 
+    @property
+    def runner(self) -> WorkRunner:
+        """Runner this server calls. Not an MCP tool, and not a way to approve."""
+        return self._runner
+
+    @property
+    def authority(self) -> ActorAuthority:
+        """Authority that seals actors for this process. Not an MCP tool."""
+        return self._authority
+
+    def host_actor(self) -> TrustedActor:
+        """Host execution actor. It can run and resume work. It cannot approve it."""
+        return self._actor()
+
     async def list_works(self) -> dict[str, JsonValue]:
         """Registered works. Requires a valid host actor and returns no executor code."""
         return await guard(self._list_works())

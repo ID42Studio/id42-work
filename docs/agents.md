@@ -64,7 +64,9 @@ response with `context.record`. The n-th request of the run is the action
 1. The agent runs. The model asks for `odoo_invoice_post`. The policy requires approval
    for that capability, so `context.invoke` suspends the execution. The model's
    responses so far, and the results of the tools it already used, are in the journal.
-2. A reviewer approves the exact action, with its parameters.
+2. A reviewer approves the exact action, with its parameters. From the command line
+   that is `id42-work approvals approve --actor <operator> --resume`. The operator
+   is not the actor that resumes. See [Approval](concepts/approval.md).
 3. `runner.resume(...)` runs the executor again from the start. `RecordedModel` returns
    the recorded responses instead of calling the model, and the tools return their
    recorded results instead of calling the providers. The agent therefore takes the
