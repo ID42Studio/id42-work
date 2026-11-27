@@ -307,7 +307,9 @@ async def test_cancel_and_idempotent_restart() -> None:
     assert cancelled["status"] == "COMPLETED"
     execution_id = first["execution_id"]
     assert isinstance(execution_id, str)
-    assert execution_uri("journal", UUID(execution_id)) == f"id42://executions/{execution_id}/journal"
+    assert (
+        execution_uri("journal", UUID(execution_id)) == f"id42://executions/{execution_id}/journal"
+    )
 
 
 @pytest.mark.asyncio
