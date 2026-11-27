@@ -76,6 +76,9 @@ It is not filtered by actor. `show` prints one JSON object, including the redact
 parameter preview. `--resume` is off unless you set it. The operator is not the
 actor that resumes.
 
+The [operator UI](../web.md) (`id42-work web serve`) lists and shows the same
+records and calls this console. It does not decide on its own.
+
 The reason and the deciding actor are stored on the approval. `APPROVAL_DECISION`
 evidence records both (`reason`, `reason_provided`, `decision_actor_id`), and the
 approval event records the actor. The action journal does not grow a row for the

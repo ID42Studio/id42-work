@@ -47,6 +47,8 @@ Still open:
   validators and approvals stay inside `WorkRunner`. See [MCP server](mcp.md).
 - Done: `id42-work approvals` decides as an operator in a separate command. The
   MCP server still has no approve or reject tool. See [Approval](concepts/approval.md).
+- Done: `id42-work web serve` (`id42-work[web]`) is a loopback page over those
+  same consoles. It adds no MCP tool. See [Operator UI](web.md).
 - Next: LangGraph / LangChain (tools plus a journaled chat model).
 - OpenTelemetry integration (`id42-work[otel]`): the spans and attributes of specification
   12, built on the event dispatcher. Not part of 0.1.0.

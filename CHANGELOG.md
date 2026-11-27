@@ -9,6 +9,17 @@ the public API; breaking changes are listed explicitly.
 
 ### Added
 
+- Operator Web UI: optional extra `web` (`pip install "id42-work[web,mcp]"`).
+  `id42-work web serve --factory module:callable` lists pending approvals and
+  uncertain capability calls and shows the same redacted fields as the CLI.
+  Approve, reject, applied, not-applied and abandon call `ApprovalConsole` and
+  `ReconciliationConsole` only. The process binds to a loopback address
+  (default `127.0.0.1:8767`) and refuses any other address. It will not start
+  without an operator token (`--token-file`, `ID42_WORK_WEB_TOKEN_FILE` or
+  `ID42_WORK_WEB_TOKEN`) or `--credential-auth`. A configured token is always
+  required, including when a `TrustedActor` credential is also accepted.
+  Every POST needs the session and a CSRF token. The MCP server still has no
+  decision tool. See `docs/web.md`.
 - `ActorAuthority` can persist its HMAC keys in a file (`key_path`, mode `0600`,
   atomic replace). `create_key_file=True` creates the file when it is missing.
   The constructor does not read the environment;

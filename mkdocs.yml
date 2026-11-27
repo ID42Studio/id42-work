@@ -33,6 +33,7 @@ nav:
       - Reconciliation: concepts/reconciliation.md
   - AI agents: agents.md
   - MCP server: mcp.md
+  - Operator UI: web.md
   - Storage: storage.md
   - Architecture: architecture.md
   - Security: security.md

@@ -31,6 +31,12 @@ dependencies = ["pydantic>=2.7,<3"]
 postgres = ["psycopg[binary]>=3.2,<4"]
 pydantic-ai = ["pydantic-ai-slim>=2.73,<3"]
 mcp = ["mcp>=2.3,<3"]
+web = [
+    "starlette>=1.0,<2",
+    "jinja2>=3.1,<4",
+    "uvicorn>=0.32,<1",
+    "python-multipart>=0.0.18",
+]
 
 [project.scripts]
 id42-work = "id42_work.cli:main"
@@ -49,6 +55,7 @@ dev = [
     "pytest-cov>=5.0",
     "ruff>=0.8",
     "pyright>=1.1.390",
+    "httpx>=0.28",
 ]
 
 [tool.hatch.build.targets.wheel]
