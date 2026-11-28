@@ -123,6 +123,38 @@ to the process can act as the host actor the factory issues. With
 token is still a bearer secret on the loopback interface. Stdio remains one
 factory actor.
 
+## Operator UI
+
+`id42-work web serve` (extra `web`, [Operator UI](web.md)) is a separate process
+from the MCP server. It decides only by calling `ApprovalConsole` and
+`ReconciliationConsole`, so the sealed grant is still only the grant for that
+decision. The page shows the same redacted fields as the CLI. It does not add
+an MCP tool.
+
+Safe defaults:
+
+- The listener must be a loopback IP. The default is `127.0.0.1:8767`. A name
+  such as `localhost`, a wildcard, and an IPv4-mapped address are refused.
+- The process will not start without an operator token or `--credential-auth`.
+  A token comes from `--token-file`, `ID42_WORK_WEB_TOKEN_FILE` or
+  `ID42_WORK_WEB_TOKEN`. The file must be a regular file, mode `0600`, not a
+  symlink. The token is stored as a SHA-256 digest and compared with
+  `hmac.compare_digest`. It is not logged and not written into a page.
+- `--credential-auth` accepts a `TrustedActor` credential only when this
+  process's `ActorAuthority.verify` accepts it. If a token is also configured,
+  the token must still match. The credential does not widen the grant: the
+  console seals a new actor with only the decision grant.
+- Reject and abandon show a confirmation step before the console is called.
+  Approve, applied and not-applied do not.
+- Every POST needs the session cookie and a CSRF token, and `Origin` or
+  `Referer` must match the request host. Cookies are `HttpOnly` and
+  `SameSite=Strict`. Responses set `X-Content-Type-Options`, `X-Frame-Options`,
+  `Referrer-Policy`, `Cache-Control: no-store` and a content security policy
+  with no scripts. Access logs are off.
+
+A browser on another machine needs a tunnel the host operates. Do not put the
+token in a URL.
+
 ## Authority keys
 
 `ActorAuthority("host-app")` still generates a new in-memory key. That key dies

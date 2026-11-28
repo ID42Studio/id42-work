@@ -9,6 +9,19 @@ the public API; breaking changes are listed explicitly.
 
 ### Added
 
+- Operator Web UI: optional extra `web` (`pip install "id42-work[web,mcp]"`).
+  `id42-work web serve --factory module:callable` lists pending approvals and
+  uncertain capability calls and shows the same redacted fields as the CLI.
+  Approve, reject, applied, not-applied and abandon call `ApprovalConsole` and
+  `ReconciliationConsole` only. The process binds to a loopback address
+  (default `127.0.0.1:8767`) and refuses any other address. It will not start
+  without an operator token (`--token-file`, `ID42_WORK_WEB_TOKEN_FILE` or
+  `ID42_WORK_WEB_TOKEN`) or `--credential-auth`. A configured token is always
+  required, including when a `TrustedActor` credential is also accepted.
+  Every POST needs the session and a CSRF token. Reject and abandon ask for
+  confirmation before the console is called. Pages are a local stylesheet with
+  labeled summaries, not a script bundle. The MCP server still has no
+  decision tool. See `docs/web.md`.
 - MCP server: optional `session_actor` so distinct HTTP sessions are distinct
   actors. `credential_session_actor` reads `Id42-Actor-Credential`
   (`TrustedActor.to_credential`); the server still verifies the seal. HTTP

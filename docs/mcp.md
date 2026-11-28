@@ -35,8 +35,9 @@ Resources, all `application/json`:
 - `id42://executions/{execution_id}/approvals`
 
 There is no approve, reject or reconcile tool. `id42-work approvals` and
-`id42-work reconcile` are separate commands, not tools on this server. Extra
-arguments such as `actor_id`, `grants` or a credential are
+`id42-work reconcile` are separate commands, not tools on this server. The
+optional [operator UI](web.md) calls those same consoles and does not add a
+tool either. Extra arguments such as `actor_id`, `grants` or a credential are
 ignored. Amounts that the work schema types as `Decimal` must be JSON strings.
 A float would change the action digest.
 

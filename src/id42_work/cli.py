@@ -1,7 +1,7 @@
 """Command line entry point.
 
-``mcp serve``, ``approvals`` and ``reconcile`` load the MCP extra themselves.
-Importing this module does not import it.
+``mcp serve``, ``approvals``, ``reconcile`` and ``web serve`` load their extras
+themselves. Importing this module does not import those extras.
 """
 
 from __future__ import annotations
@@ -104,6 +104,7 @@ def build_parser() -> argparse.ArgumentParser:
     reject.add_argument("--reason", required=True, help="Why the approval was rejected")
     reject.set_defaults(handler=_approvals)
     _add_reconcile(commands)
+    _add_web(commands)
     return parser
 
 
@@ -170,6 +171,53 @@ def _add_reconcile(
 _DEFAULT_HTTP_PORT = 8766
 _MIN_PORT = 1
 _MAX_PORT = 65535
+_WEB_HOST = "127.0.0.1"
+_WEB_PORT = 8767
+
+
+def _add_web(
+    commands: argparse._SubParsersAction[argparse.ArgumentParser],  # pyright: ignore[reportPrivateUsage]
+) -> None:
+    web = commands.add_parser(
+        "web",
+        help="Operator Web UI for approvals and reconciliation. Not an MCP tool.",
+        description=(
+            "Serve a loopback UI that decides through the approval and "
+            "reconciliation consoles. Not an MCP tool."
+        ),
+    )
+    sub = web.add_subparsers(dest="web_command", required=True)
+    serve = sub.add_parser(
+        "serve",
+        help="Serve the operator UI on a loopback address (default 127.0.0.1)",
+    )
+    serve.add_argument(
+        "--factory",
+        required=True,
+        help="module:callable that returns a WorkMcpServer, the same contract as mcp serve",
+    )
+    serve.add_argument(
+        "--host",
+        default=_WEB_HOST,
+        help="Loopback IP address to bind (default 127.0.0.1). Other addresses are refused",
+    )
+    serve.add_argument(
+        "--port",
+        type=int,
+        default=_WEB_PORT,
+        help=f"TCP port (default {_WEB_PORT})",
+    )
+    serve.add_argument(
+        "--token-file",
+        default=None,
+        help="Mode 0600 file containing the operator token. Overrides the token environment",
+    )
+    serve.add_argument(
+        "--credential-auth",
+        action="store_true",
+        help="Also accept a TrustedActor credential verified by the factory authority",
+    )
+    serve.set_defaults(handler=_web_serve)
 
 
 def _serve(args: argparse.Namespace) -> int:
@@ -256,6 +304,44 @@ def _reconcile(args: argparse.Namespace) -> int:
         print(f"id42-work: {exc}", file=sys.stderr)
         return 1
     except ValueError as exc:
+        print(f"id42-work: {exc}", file=sys.stderr)
+        return 2
+    return 0
+
+
+def _web_serve(args: argparse.Namespace) -> int:
+    try:
+        from id42_work.web._dependency import require_web  # noqa: PLC0415
+
+        require_web()
+    except ImportError as exc:
+        print(exc, file=sys.stderr)
+        return 1
+    try:
+        from id42_work.mcp._dependency import require_mcp  # noqa: PLC0415
+
+        require_mcp()
+        from id42_work.mcp.server import load_factory  # noqa: PLC0415
+    except ImportError as exc:
+        print(exc, file=sys.stderr)
+        return 1
+    try:
+        server = load_factory(args.factory)
+    except (ImportError, AttributeError, ValueError, TypeError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    from id42_work.web.serve import serve_web  # noqa: PLC0415
+
+    try:
+        serve_web(
+            server,
+            host=args.host,
+            port=args.port,
+            token_file=args.token_file,
+            credential_auth=args.credential_auth,
+            factory=args.factory,
+        )
+    except (TypeError, ValueError) as exc:
         print(f"id42-work: {exc}", file=sys.stderr)
         return 2
     return 0

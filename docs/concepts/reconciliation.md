@@ -108,5 +108,8 @@ id42-work reconcile abandon EXECUTION_ID ACTION_ID \
 still require reconciliation. An abandoned execution is omitted. `show` prints
 one JSON object. The result appears only as `result_digest`.
 
+The [operator UI](../web.md) (`id42-work web serve`) lists and shows the same
+records and calls this console. It does not decide on its own.
+
 `run` with the same idempotency key still returns the failed execution. Call
 `resume` after the decision, or pass `--resume`.

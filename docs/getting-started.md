@@ -41,6 +41,15 @@ from the command line, outside the client:
 id42-work approvals list --factory examples.mcp_greeting:server
 ```
 
+The same factory can be opened in a browser on this machine, with the `web`
+extra installed and an operator token set:
+
+```bash
+ID42_WORK_WEB_TOKEN=replace-me \
+  id42-work web serve --factory examples.mcp_greeting:server
+```
+
+That page is loopback only. See [Operator UI](web.md).
 `examples/mcp_greeting.py` does not request an approval, so the list is empty.
 [Approval](concepts/approval.md) shows a factory that does.
 

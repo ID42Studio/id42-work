@@ -34,6 +34,7 @@ Core principle: **autonomy is a permission, not a capability.**
   [Reconciliation](concepts/reconciliation.md).
 - [AI agents](agents.md) and the [MCP server](mcp.md) (`id42-work[mcp]`).
   `id42-work approvals` and `id42-work reconcile` decide outside that server.
+  The [operator UI](web.md) (`id42-work[web]`) is the same decisions in a browser.
 - [Storage](storage.md): memory, SQLite or PostgreSQL, migrations, claims, crash recovery.
 - [Architecture](architecture.md): module map, runtime order, deviations from the
   specification.

@@ -47,9 +47,10 @@ or, with [uv](https://docs.astral.sh/uv/), for development:
 uv sync --all-extras --dev
 ```
 
-Optional extras: `postgres` (PostgreSQL storage), `pydantic-ai` (AI agents) and
-`mcp` (an MCP server over governed execution), for example
-`pip install "id42-work[mcp]"`.
+Optional extras: `postgres` (PostgreSQL storage), `pydantic-ai` (AI agents),
+`mcp` (an MCP server over governed execution) and `web` (a loopback operator UI
+for approvals and reconciliation), for example `pip install "id42-work[mcp]"`
+or `pip install "id42-work[web,mcp]"`.
 
 Once published, it will be installable with `pip install id42-work`.
 
@@ -287,7 +288,8 @@ executions. Listing tools are paged. Each HTTP session can be its own verified
 actor; stdio stays the single factory actor, which is still the default. It
 does not expose capabilities as tools and it cannot approve or reconcile.
 `id42-work approvals` and `id42-work reconcile` decide as a separate
-operator, using the same factory. Still open: a LangGraph adapter, an Odoo 18
+operator, using the same factory. `id42-work web serve` (`id42-work[web]`) is
+the same decisions in a loopback page. Still open: a LangGraph adapter, an Odoo 18
 connector package, and workflow composition. See [docs/roadmap.md](docs/roadmap.md)
 and [docs/mcp.md](docs/mcp.md).
 
