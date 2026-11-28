@@ -264,8 +264,8 @@ _RECONCILE = (
 </form>
 </section>
 {% elif open_call %}
-<div class="stack">
-<form class="panel block" method="post" action="{{ action }}/applied">
+<div class="decisions">
+<form class="panel" method="post" action="{{ action }}/applied">
 <input type="hidden" name="csrf" value="{{ csrf }}">
 <h2>Applied</h2>
 <p class="hint">The effect happened. The result is stored with the decision.</p>
@@ -279,7 +279,7 @@ _RECONCILE = (
 Resume as the host actor</label>
 <button type="submit">Mark applied</button>
 </form>
-<form class="panel block" method="post" action="{{ action }}/not-applied">
+<form class="panel" method="post" action="{{ action }}/not-applied">
 <input type="hidden" name="csrf" value="{{ csrf }}">
 <h2>Not applied</h2>
 <p class="hint">Nothing was written. Resume can retry the same operation.</p>
@@ -290,7 +290,7 @@ Resume as the host actor</label>
 Resume as the host actor</label>
 <button type="submit">Mark not applied</button>
 </form>
-<form class="panel block" method="post" action="{{ action }}/abandon">
+<form class="panel" method="post" action="{{ action }}/abandon">
 <input type="hidden" name="csrf" value="{{ csrf }}">
 <h2>Abandon</h2>
 <p class="hint">The execution stays failed.</p>

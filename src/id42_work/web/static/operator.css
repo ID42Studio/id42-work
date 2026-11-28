@@ -259,19 +259,40 @@ pre.code {
   font: 0.86rem/1.55 var(--mono);
 }
 
-.actions {
+.actions, .decisions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-4);
+  column-gap: var(--space-4);
+  row-gap: var(--space-3);
   margin-top: var(--space-5);
+  align-items: stretch;
 }
-.actions form, .confirm {
+.decisions { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.actions > form, .decisions > form {
   display: grid;
+  grid-template-rows: subgrid;
+  row-gap: var(--space-3);
+  padding: var(--space-5);
+  align-content: start;
+}
+.actions > form { grid-row: span 4; }
+.decisions > form { grid-row: span 6; }
+.actions > form > h2, .decisions > form > h2 { grid-row: 1; }
+.actions > form > .field { grid-row: 2; }
+.actions > form > .check { grid-row: 3; }
+.actions > form > button { grid-row: 4; }
+.decisions > form > .hint { grid-row: 2; margin: 0; align-self: start; }
+.decisions > form > .field { grid-row: 3; }
+.decisions > form > .field ~ .field { grid-row: 4; }
+.decisions > form > .check { grid-row: 5; }
+.decisions > form > button { grid-row: 6; }
+.actions h2, .decisions h2, .confirm h2 { margin: 0; font-size: 1rem; }
+.confirm {
+  display: grid;
+  align-content: start;
   gap: var(--space-3);
   padding: var(--space-5);
 }
-.actions h2, .confirm h2 { margin: 0; font-size: 1rem; }
-.stack { display: grid; gap: var(--space-4); margin-top: var(--space-5); }
 
 label.field { display: grid; gap: var(--space-1); font-weight: 650; font-size: 0.92rem; }
 input[type="text"], input[type="password"], textarea {
@@ -334,7 +355,7 @@ button.quiet, a.quiet {
 
 @media (max-width: 800px) {
   .top-inner, .who, .actions, .summary { display: grid; }
-  .summary { grid-template-columns: 1fr; }
+  .actions, .decisions, .summary { grid-template-columns: 1fr; }
   .who { justify-items: start; }
   .nav { flex-wrap: wrap; }
   table { display: block; overflow-x: auto; }
